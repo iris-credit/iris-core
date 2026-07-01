@@ -436,7 +436,7 @@ contract Iris is IIris {
             );
 
         emit EventsLib.SetNonce(msg.sender, quote.solver, quote.nonce);
-        emit EventsLib.Take(msg.sender, pod, quote);
+        emit EventsLib.Take(msg.sender, pod, quote, collateralIndex, debtIndex);
 
         return pod;
     }

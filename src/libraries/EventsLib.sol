@@ -17,7 +17,7 @@ library EventsLib {
     event SetNonce(address indexed caller, address indexed authorizer, uint256 nonce);
     event SetAuthorization(address indexed caller, address indexed authorizer, address indexed authorized, bool isAuthorized);
     // Loan events
-    event Take(address indexed caller, address indexed pod, Quote quote);
+    event Take(address indexed caller, address indexed pod, Quote quote, uint256 collateralIndex, uint256 debtIndex);
     event Repay(address indexed caller, address indexed pod, uint256 repaid, uint256 badBond);
     event Liquidate(address indexed caller, address indexed pod, address indexed receiver, uint256 repaid, uint256 seized, uint256 badBond);
     // Collateral events

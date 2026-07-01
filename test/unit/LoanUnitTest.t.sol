@@ -284,7 +284,7 @@ contract LoanUnitTest is UnitTest {
         vm.expectEmit();
         emit EventsLib.SetNonce(borrower, solver, quote.nonce);
         vm.expectEmit();
-        emit EventsLib.Take(borrower, expectedPod, quote);
+        emit EventsLib.Take(borrower, expectedPod, quote, DEFAULT_TEST_COLLATERAL_INDEX, DEFAULT_TEST_DEBT_INDEX);
         address newPod = iris.take(quote, signature);
         vm.stopPrank();
 
