@@ -1,0 +1,33 @@
+{
+  "venues": {
+    "aaveV3": {
+      "id": 0,
+      "address": "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+      "adapter": "AaveV3Adapter",
+      "markets": {
+        "all": ""
+      }
+    },
+    "morphoBlue": {
+      "id": 1,
+      "address": "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb",
+      "adapter": "MorphoBlueAdapter",
+      "markets": {
+        "cbBTC/USDC": "0x64d65c9a2d91c36d56fbc42d69e979335320169b3df63bf92789e2c8883fcc64",
+        "wstETH/USDT": "0xe7e9694b754c4d4f7e21faf7223f6fa71abaeb10296a4c43a54a7977149687d2",
+        "WBTC/USDC": "0x3a85e619751152991742810df6ec69ce473daef99e28a64ab2340d7b7ccfee49"
+      }
+    }
+  },
+  "tokens": {
+    "USDC": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "USDT": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    "WBTC": "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
+    "cbBTC": "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf",
+    "WETH": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+    "stETH": "0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84",
+    "wstETH": "0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0"
+  },
+  "feeRecipient": "0xC114D3109A8Cc85B40BA231cDA11c1d815654C7d",
+  "fee": "100000000000000000"
+}

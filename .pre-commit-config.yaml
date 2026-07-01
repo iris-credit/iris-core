@@ -1,0 +1,11 @@
+exclude: ^lib/
+
+repos:
+  - repo: local
+    hooks:
+      - id: forge-fmt
+        name: forge fmt
+        entry: forge fmt
+        language: system
+        pass_filenames: false
+        always_run: true

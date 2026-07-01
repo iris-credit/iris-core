@@ -1,0 +1,32 @@
+[profile.default]
+solc = "0.8.35"
+src = "src"
+out = "out"
+libs = ["lib"]
+test = "test"
+via_ir = true
+optimizer = true
+optimizer_runs = 800
+bytecode_hash = "none"
+ignored_warnings_from = ["lib"]
+fs_permissions = [
+    { access = "read", path = "./config" },
+    { access = "read-write", path = "./deployments" },
+]
+
+[profile.default.invariant]
+runs = 8
+depth = 256
+fail_on_revert = true
+
+[profile.default.fmt]
+wrap_comments = true
+
+[lint]
+ignore = ["test/**/*.sol", "lib/**/*.sol"]
+exclude_lints = ["asm-keccak256"]
+
+[rpc_endpoints]
+ethereum = "https://eth-mainnet.g.alchemy.com/v2/${API_KEY_ALCHEMY}"
+
+# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options

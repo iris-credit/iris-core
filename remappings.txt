@@ -1,0 +1,6 @@
+forge-std/=lib/forge-std/src/
+@solady/=lib/solady/src/
+@morpho-blue/=lib/morpho-blue/src/
+@aave/=lib/aave-v3-origin/src/
+@morpho-blue-irm/=lib/morpho-blue-irm/src/
+@morpho-blue-irm-mb/=lib/morpho-blue-irm/lib/morpho-blue/src/
