@@ -760,7 +760,7 @@ contract Iris is IIris {
         pos.venueId = uint8(newVenueId);
         pos.data = data;
 
-        emit EventsLib.Refinance(msg.sender, pod, newVenueId, newAdapter, data);
+        emit EventsLib.Refinance(msg.sender, pod, newVenueId, newAdapter, newCollateralIndex, newDebtIndex, data);
     }
 
     function escape(address pod, address receiver) external {
@@ -829,7 +829,7 @@ contract Iris is IIris {
         pos.collateral = pos.collateral.zeroFloorSub(liquidated).toUint128();
         pos.debt = pos.debt.zeroFloorSub(MathLib.min(repaid, maxRepaid)).toUint128();
 
-        emit EventsLib.Rebase(msg.sender, pod, pos.collateral, pos.debt, badDebt);
+        emit EventsLib.Rebase(msg.sender, pod, pos.collateral, pos.debt, venueCollateral, venueDebt, badDebt);
     }
 
     /* INTEREST FUNCTIONS */

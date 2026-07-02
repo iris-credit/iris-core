@@ -84,7 +84,9 @@ contract VenueManagementUnitTest is UnitTest {
             )
         );
         vm.expectEmit();
-        emit EventsLib.Refinance(solver, pod, newVenueId, address(newAdapter), newData);
+        emit EventsLib.Refinance(
+            solver, pod, newVenueId, address(newAdapter), newVenueCollateralIndex, newVenueDebtIndex, newData
+        );
         iris.refinance(pod, newVenueId, newData);
         vm.stopPrank();
 
@@ -217,7 +219,7 @@ contract VenueManagementUnitTest is UnitTest {
         uint256 expectedDebt = debt.zeroFloorSub(MathLib.min(repaid, liquidated.mulDivDown(price, ORACLE_PRICE_SCALE)));
         uint256 badDebt = venueDebt.zeroFloorSub(venueCollateral.mulDivDown(price, ORACLE_PRICE_SCALE));
         vm.expectEmit();
-        emit EventsLib.Rebase(borrower, pod, expectedCollateral, expectedDebt, badDebt);
+        emit EventsLib.Rebase(borrower, pod, expectedCollateral, expectedDebt, venueCollateral, venueDebt, badDebt);
         vm.prank(borrower);
         iris.rebase(pod);
 
@@ -251,7 +253,9 @@ contract VenueManagementUnitTest is UnitTest {
         VenueAdapterMock(address(venueAdapter)).setPosition(venueCollateral, venueDebt);
 
         vm.expectEmit();
-        emit EventsLib.Rebase(address(this), pod, 0, 0, venueDebt.zeroFloorSub(venueCollateral));
+        emit EventsLib.Rebase(
+            address(this), pod, 0, 0, venueCollateral, venueDebt, venueDebt.zeroFloorSub(venueCollateral)
+        );
         iris.rebase(pod);
 
         Position memory pos = iris.getPosition(pod);
@@ -278,7 +282,7 @@ contract VenueManagementUnitTest is UnitTest {
         VenueAdapterMock(address(venueAdapter)).setPosition(0, 0);
 
         vm.expectEmit();
-        emit EventsLib.Rebase(address(this), pod, 0, 0, 0);
+        emit EventsLib.Rebase(address(this), pod, 0, 0, 0, 0, 0);
         iris.rebase(pod);
 
         Position memory pos = iris.getPosition(pod);

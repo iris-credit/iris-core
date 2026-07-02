@@ -28,8 +28,8 @@ library EventsLib {
     event WithdrawBond(address indexed caller, address indexed pod, address indexed receiver, uint256 amount);
     event LiquidateBond(address indexed caller, address indexed pod, address indexed receiver, uint256 seized);
     // Venue management events
-    event Refinance(address indexed caller, address indexed pod, uint256 indexed newVenueId, address newVenueAdapter, bytes data);
-    event Rebase(address indexed caller, address indexed pod, uint256 newCollateral, uint256 newDebt, uint256 badDebt);
+    event Refinance(address indexed caller, address indexed pod, uint256 indexed newVenueId, address newVenueAdapter, uint256 newCollateralIndex, uint256 newDebtIndex, bytes data);
+    event Rebase(address indexed caller, address indexed pod, uint256 newCollateral, uint256 newDebt, uint256 venueCollateral, uint256 venueDebt, uint256 badDebt);
     event Escape(address indexed caller, address indexed pod, address indexed receiver, uint256 venueCollateral, uint256 venueDebt);
     // Interest events
     event Accrue(address indexed pod, uint256 newCollateralIndex, uint256 newDebtIndex, uint256 fixedLeg, uint256 floatingLeg, uint256 surplus);
