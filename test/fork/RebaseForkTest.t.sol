@@ -152,7 +152,7 @@ contract RebaseForkTest is ForkTest {
         uint256 expectedDebt = uint256(pos.debt).zeroFloorSub(maxRepaid);
 
         vm.expectEmit();
-        emit EventsLib.Rebase(address(this), pod, newVenueCollateral, expectedDebt, 0);
+        emit EventsLib.Rebase(address(this), pod, newVenueCollateral, expectedDebt, newVenueCollateral, newVenueDebt, 0);
         iris.rebase(pod);
 
         Position memory newPos = iris.getPosition(pod);
@@ -205,7 +205,7 @@ contract RebaseForkTest is ForkTest {
             uint256(pos.debt).zeroFloorSub(MathLib.min(repaid, liquidated.mulDivDown(price, ORACLE_PRICE_SCALE)));
 
         vm.expectEmit();
-        emit EventsLib.Rebase(borrower, pod, remainingCollateral, expectedDebt, 0);
+        emit EventsLib.Rebase(borrower, pod, remainingCollateral, expectedDebt, remainingCollateral, remainingDebt, 0);
         vm.prank(borrower);
         iris.rebase(pod);
 
@@ -247,7 +247,7 @@ contract RebaseForkTest is ForkTest {
             .zeroFloorSub(MathLib.min(uint256(pos.debt), liquidated.mulDivDown(price, ORACLE_PRICE_SCALE)));
 
         vm.expectEmit();
-        emit EventsLib.Rebase(borrower, pod, remainingCollateral, expectedDebt, 0);
+        emit EventsLib.Rebase(borrower, pod, remainingCollateral, expectedDebt, remainingCollateral, 0, 0);
         vm.prank(borrower);
         iris.rebase(pod);
 
@@ -282,7 +282,7 @@ contract RebaseForkTest is ForkTest {
         _mockPositionAssets(adapter, pod, collateralToken, debtToken, data, 0, 0);
 
         vm.expectEmit();
-        emit EventsLib.Rebase(borrower, pod, 0, 0, 0);
+        emit EventsLib.Rebase(borrower, pod, 0, 0, 0, 0, 0);
         vm.prank(borrower);
         iris.rebase(pod);
 
@@ -329,7 +329,9 @@ contract RebaseForkTest is ForkTest {
             uint256(pos.debt).zeroFloorSub(MathLib.min(repaid, liquidated.mulDivDown(price, ORACLE_PRICE_SCALE)));
 
         vm.expectEmit();
-        emit EventsLib.Rebase(borrower, pod, remainingCollateral, expectedDebt, badDebt);
+        emit EventsLib.Rebase(
+            borrower, pod, remainingCollateral, expectedDebt, remainingCollateral, remainingDebt, badDebt
+        );
         vm.prank(borrower);
         iris.rebase(pod);
 

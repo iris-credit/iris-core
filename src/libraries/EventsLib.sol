@@ -17,7 +17,7 @@ library EventsLib {
     event SetNonce(address indexed caller, address indexed authorizer, uint256 nonce);
     event SetAuthorization(address indexed caller, address indexed authorizer, address indexed authorized, bool isAuthorized);
     // Loan events
-    event Take(address indexed caller, address indexed pod, Quote quote);
+    event Take(address indexed caller, address indexed pod, Quote quote, uint256 collateralIndex, uint256 debtIndex);
     event Repay(address indexed caller, address indexed pod, uint256 repaid, uint256 badBond);
     event Liquidate(address indexed caller, address indexed pod, address indexed receiver, uint256 repaid, uint256 seized, uint256 badBond);
     // Collateral events
@@ -28,8 +28,8 @@ library EventsLib {
     event WithdrawBond(address indexed caller, address indexed pod, address indexed receiver, uint256 amount);
     event LiquidateBond(address indexed caller, address indexed pod, address indexed receiver, uint256 seized);
     // Venue management events
-    event Refinance(address indexed caller, address indexed pod, uint256 indexed newVenueId, address newVenueAdapter, bytes data);
-    event Rebase(address indexed caller, address indexed pod, uint256 newCollateral, uint256 newDebt, uint256 badDebt);
+    event Refinance(address indexed caller, address indexed pod, uint256 indexed newVenueId, address newVenueAdapter, uint256 newCollateralIndex, uint256 newDebtIndex, bytes data);
+    event Rebase(address indexed caller, address indexed pod, uint256 newCollateral, uint256 newDebt, uint256 venueCollateral, uint256 venueDebt, uint256 badDebt);
     event Escape(address indexed caller, address indexed pod, address indexed receiver, uint256 venueCollateral, uint256 venueDebt);
     // Interest events
     event Accrue(address indexed pod, uint256 newCollateralIndex, uint256 newDebtIndex, uint256 fixedLeg, uint256 floatingLeg, uint256 surplus);

@@ -42,6 +42,7 @@ forge build
 
 ACTION=$(gum choose \
   "Deploy (Pod, Iris, adapters, BLMs)" \
+  "Redeploy Iris (one-shot venue/market/LLTV/BLM/fee setup)" \
   "Add / upgrade venue" \
   "Enable market" \
   "Enable bond LLTV" \
@@ -56,6 +57,26 @@ ACTION=$(gum choose \
 case "$ACTION" in
   "Deploy"*)
     forge script script/Deploy.s.sol $(rpcArgs)
+    ;;
+  "Redeploy Iris"*)
+    # One shot: deploy Iris (only if absent from the book), then wire venues, markets, bond LLTV,
+    # BLM, and fees against the already-deployed contracts. Config-driven; idempotent on re-run.
+    VENUE_IDS=$(jq -r '[.venues[].id | tostring] | join(",")' "config/$CHAIN.json")
+    ADAPTERS=$(jq -r '[.venues[].adapter] | join(",")' "config/$CHAIN.json")
+    # Resolve every market to its final quote-data hash; empty (Aave-style venues ignore data) -> keccak256("").
+    EMPTY_DATA=$(cast keccak "")
+    MARKET_DATA=$(jq -r --arg empty "$EMPTY_DATA" \
+      '[.venues[].markets[] | if . == "" then $empty else . end] | join(",")' "config/$CHAIN.json")
+    BOND_LLTV=$(gum input --header "bond LLTV (wad, multiple of BP)" --value "900000000000000000")
+    FEE=$(jq -r '.fee' "config/$CHAIN.json")
+    FEE_RECIPIENT=$(jq -r '.feeRecipient' "config/$CHAIN.json")
+    info "venues: ids [$VENUE_IDS] -> adapters [$ADAPTERS]"
+    info "market data: [$MARKET_DATA]"
+    info "bond lltv: $BOND_LLTV | blm: Blm | fee: $FEE -> $FEE_RECIPIENT"
+    gum confirm "Redeploy Iris + apply the setup above?" || exit 1
+    VENUE_IDS="$VENUE_IDS" ADAPTERS="$ADAPTERS" MARKET_DATA="$MARKET_DATA" BOND_LLTV="$BOND_LLTV" \
+      BLM="Blm" FEE="$FEE" FEE_RECIPIENT="$FEE_RECIPIENT" \
+      forge script script/RedeployIris.s.sol $(rpcArgs)
     ;;
   "Add / upgrade venue")
     VENUE=$(jq -r '.venues | keys_unsorted[]' "config/$CHAIN.json" | gum choose --header "Venue (label -> id)")

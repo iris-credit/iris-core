@@ -284,7 +284,7 @@ contract LoanUnitTest is UnitTest {
         vm.expectEmit();
         emit EventsLib.SetNonce(borrower, solver, quote.nonce);
         vm.expectEmit();
-        emit EventsLib.Take(borrower, expectedPod, quote);
+        emit EventsLib.Take(borrower, expectedPod, quote, DEFAULT_TEST_COLLATERAL_INDEX, DEFAULT_TEST_DEBT_INDEX);
         address newPod = iris.take(quote, signature);
         vm.stopPrank();
 
@@ -718,7 +718,7 @@ contract LoanUnitTest is UnitTest {
             )
         );
         vm.expectEmit();
-        emit EventsLib.Rebase(borrower, pod, 0, 0, badDebt);
+        emit EventsLib.Rebase(borrower, pod, 0, 0, venueCollateral, venueDebt, badDebt);
         vm.expectEmit();
         emit EventsLib.Repay(borrower, pod, repaid, 0);
         uint256 returned = iris.repay(pod);
@@ -806,7 +806,7 @@ contract LoanUnitTest is UnitTest {
         );
         vm.expectCall(collateralToken, abi.encodeWithSelector(ERC20.transfer.selector, receiver, seized));
         vm.expectEmit();
-        emit EventsLib.Rebase(address(this), pod, rebasedCollateral, 0, 0);
+        emit EventsLib.Rebase(address(this), pod, rebasedCollateral, 0, venueCollateral, venueDebt, 0);
         vm.expectEmit();
         emit EventsLib.Liquidate(address(this), pod, receiver, repaid, seized, 0);
         (uint256 returnedRepaid, uint256 returnedSeized) = iris.liquidate(pod, receiver);
