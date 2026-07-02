@@ -152,9 +152,7 @@ contract RebaseForkTest is ForkTest {
         uint256 expectedDebt = uint256(pos.debt).zeroFloorSub(maxRepaid);
 
         vm.expectEmit();
-        emit EventsLib.Rebase(
-            address(this), pod, newVenueCollateral, expectedDebt, newVenueCollateral, newVenueDebt, 0
-        );
+        emit EventsLib.Rebase(address(this), pod, newVenueCollateral, expectedDebt, newVenueCollateral, newVenueDebt, 0);
         iris.rebase(pod);
 
         Position memory newPos = iris.getPosition(pod);
