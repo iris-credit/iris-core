@@ -19,15 +19,19 @@ contract VenueManagementUnitTest is UnitTest {
         uint256 newVenueCollateralIndex = 1.3e27;
         uint256 newVenueDebtIndex = 1.5e27;
 
+        // Zero receiver
+        vm.expectRevert(IIris.ZeroAddress.selector);
+        iris.refinance(pod, address(0), newVenueId, newData);
+
         // Loan not created
         vm.expectRevert(IIris.LoanNotCreated.selector);
-        iris.refinance(pod, newVenueId, newData);
+        iris.refinance(pod, receiver, newVenueId, newData);
 
         StorageUtils.setPositionLastUpdate(address(iris), pod, uint32(block.timestamp));
 
         // Zero bond requirement
         vm.expectRevert(IIris.ZeroAmount.selector);
-        iris.refinance(pod, newVenueId, newData);
+        iris.refinance(pod, receiver, newVenueId, newData);
 
         StorageUtils.setPositionBondRequirement(address(iris), pod, 1);
 
@@ -35,12 +39,12 @@ contract VenueManagementUnitTest is UnitTest {
         StorageUtils.setLoanSolver(address(iris), pod, solver);
         vm.expectRevert(IIris.Unauthorized.selector);
         vm.prank(borrower);
-        iris.refinance(pod, newVenueId, newData);
+        iris.refinance(pod, receiver, newVenueId, newData);
 
         // Adapter not set
         vm.expectRevert(IIris.AdapterNotSet.selector);
         vm.prank(solver);
-        iris.refinance(pod, newVenueId, newData);
+        iris.refinance(pod, receiver, newVenueId, newData);
 
         // Not allowed venue
         VenueAdapterMock newAdapter = new VenueAdapterMock();
@@ -50,13 +54,13 @@ contract VenueManagementUnitTest is UnitTest {
 
         vm.expectRevert(IIris.NotAllowedVenue.selector);
         vm.prank(solver);
-        iris.refinance(pod, newVenueId, newData);
+        iris.refinance(pod, receiver, newVenueId, newData);
 
         // Invalid data - refinance is only possible to whitelisted (enabled) markets
         StorageUtils.setLoanVenueBitmap(address(iris), pod, type(uint256).max);
         vm.expectRevert(IIris.InvalidData.selector);
         vm.prank(solver);
-        iris.refinance(pod, newVenueId, newData);
+        iris.refinance(pod, receiver, newVenueId, newData);
 
         // Normal path
         StorageUtils.setLoanCollateralToken(address(iris), pod, collateralToken);
@@ -80,14 +84,14 @@ contract VenueManagementUnitTest is UnitTest {
         vm.expectCall(
             address(newAdapter),
             abi.encodeWithSelector(
-                IVenueAdapter.enter.selector, collateralToken, collateral, debtToken, debt, solver, newData
+                IVenueAdapter.enter.selector, collateralToken, collateral, debtToken, debt, receiver, newData
             )
         );
         vm.expectEmit();
         emit EventsLib.Refinance(
-            solver, pod, newVenueId, address(newAdapter), newVenueCollateralIndex, newVenueDebtIndex, newData
+            solver, pod, receiver, newVenueId, address(newAdapter), newVenueCollateralIndex, newVenueDebtIndex, newData
         );
-        iris.refinance(pod, newVenueId, newData);
+        iris.refinance(pod, receiver, newVenueId, newData);
         vm.stopPrank();
 
         Position memory pos = iris.getPosition(pod);

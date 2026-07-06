@@ -72,7 +72,7 @@ contract RefinanceForkTest is ForkTest {
         deal(hop.debtToken, solver, venueDebt);
         vm.startPrank(solver);
         hop.debtToken.safeApprove(address(iris), venueDebt);
-        iris.refinance(pod, hop.newVenueId, hop.newData);
+        iris.refinance(pod, solver, hop.newVenueId, hop.newData);
         vm.stopPrank();
 
         (uint256 newVenueCollateral, uint256 newVenueDebt) =
@@ -129,7 +129,7 @@ contract RefinanceForkTest is ForkTest {
         hop.debtToken.safeApprove(address(iris), venueDebt);
 
         vm.prank(solver);
-        try iris.refinance(pod, hop.venueId, hop.data) {
+        try iris.refinance(pod, solver, hop.venueId, hop.data) {
             (uint256 newVenueCollateral, uint256 newVenueDebt) =
                 hop.adapter.positionAssets(pod, hop.collateralToken, hop.debtToken, hop.data);
             (uint256 newCollateralIndex, uint256 newDebtIndex) =
@@ -228,7 +228,7 @@ contract RefinanceForkTest is ForkTest {
         deal(hop.debtToken, solver, remainingDebt);
         vm.startPrank(solver);
         hop.debtToken.safeApprove(address(iris), remainingDebt);
-        iris.refinance(pod, hop.newVenueId, hop.newData);
+        iris.refinance(pod, solver, hop.newVenueId, hop.newData);
         vm.stopPrank();
 
         (uint256 newVenueCollateral, uint256 newVenueDebt) =
@@ -245,6 +245,47 @@ contract RefinanceForkTest is ForkTest {
         assertApproxEqAbs(newVenueCollateral, remainingCollateral, 2);
         assertApproxEqAbs(newVenueDebt, remainingDebt, 2);
         assertEq(hop.debtToken.balanceOf(solver), remainingDebt);
+    }
+
+    // Routes the new venue's borrow proceeds to a third-party receiver instead of the caller.
+    function testRefinanceProceedsReceiver(uint256 collateral, uint256 debt, uint256 seed, uint256 venueId) public {
+        seed = bound(seed, 0, type(uint256).max);
+        venueId = bound(venueId, 0, uint256(type(VenueId).max));
+
+        Hop memory hop = _randomHop(seed, venueId);
+
+        vm.prank(owner);
+        blm.setParams(hop.debtToken, DEFAULT_SLOPE, DEFAULT_INTERCEPT);
+
+        (collateral, debt) = _boundHealthyPosition(
+            hop.collateralToken, hop.debtToken, collateral, debt, hop.venueId, hop.newVenueId, hop.data, hop.newData, 0
+        );
+        // Back off the exact borrow-capacity edge: venue rounding (debt up) can overshoot the
+        // destination's liquidity by a wei at the boundary, which is not what this test is about.
+        debt -= debt / 100;
+
+        Quote memory quote =
+            _buildQuote(hop.collateralToken, hop.debtToken, collateral, debt, 30 days, 7 days, hop.venueId, hop.data);
+        address pod = _openLoan(quote);
+
+        (, uint256 venueDebt) = hop.adapter.positionAssets(pod, hop.collateralToken, hop.debtToken, hop.data);
+
+        address proceedsReceiver = makeAddr("proceedsReceiver");
+
+        deal(hop.debtToken, solver, venueDebt);
+        vm.startPrank(solver);
+        hop.debtToken.safeApprove(address(iris), venueDebt);
+        iris.refinance(pod, proceedsReceiver, hop.newVenueId, hop.newData);
+        vm.stopPrank();
+
+        (uint256 newVenueCollateral, uint256 newVenueDebt) =
+            hop.newAdapter.positionAssets(pod, hop.collateralToken, hop.debtToken, hop.newData);
+
+        assertApproxEqAbs(newVenueCollateral, collateral, 2);
+        assertApproxEqAbs(newVenueDebt, venueDebt, 2);
+        // The new venue borrow lands at the receiver; the caller's fronted funds are spent.
+        assertEq(hop.debtToken.balanceOf(proceedsReceiver), venueDebt);
+        assertEq(hop.debtToken.balanceOf(solver), 0);
     }
 
     /* MARKET SELECTION */

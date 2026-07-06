@@ -90,9 +90,6 @@ interface IIris {
     error ZeroAddress();
     error ZeroAmount();
 
-    // Multicall
-    function multicall(bytes[] calldata data) external;
-
     // Getters
     function DOMAIN_SEPARATOR() external view returns (bytes32);
     function getLoan(address pod) external view returns (Loan memory);
@@ -137,7 +134,7 @@ interface IIris {
     function liquidateBond(address pod, address receiver) external returns (uint256 seized);
 
     // Venue management
-    function refinance(address pod, uint256 venueId, bytes calldata data) external;
+    function refinance(address pod, address receiver, uint256 venueId, bytes calldata data) external;
     function escape(address pod, address receiver) external;
     function rebase(address pod) external;
 
@@ -145,8 +142,4 @@ interface IIris {
 		// forgefmt: disable-next-line
     function accrueLegsView(address pod) external view returns (uint256 collateralIndex, uint256 debtIndex, uint256 fixedLeg, uint256 floatingLeg, uint256 surplus);
     function claim(address token, uint256 amount, address onBehalf, address receiver) external;
-
-    // Permit2
-    function permit2(address token, address owner, uint256 amount, uint256 deadline, uint8 v, bytes32 r, bytes32 s)
-        external;
 }
