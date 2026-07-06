@@ -18,7 +18,7 @@ contract TakeForkTest is ForkTest {
         Quote memory quote = _buildAaveV3Quote(collateral, debt);
 
         uint256 receiverDebtBefore = debtToken.balanceOf(receiver);
-        address pod = _take(quote);
+        address pod = _take(quote, quote.borrower);
 
         _assertOpen(pod, quote, aaveV3Adapter, receiverDebtBefore);
     }
@@ -39,7 +39,7 @@ contract TakeForkTest is ForkTest {
         Quote memory quote = _buildQuote(uint256(VenueId.MORPHO_BLUE), data, collateral, debt);
 
         uint256 receiverDebtBefore = debtToken.balanceOf(receiver);
-        address pod = _take(quote);
+        address pod = _take(quote, quote.borrower);
 
         _assertOpen(pod, quote, morphoBlueAdapter, receiverDebtBefore);
     }
@@ -68,10 +68,10 @@ contract TakeForkTest is ForkTest {
     function testTakeMultipleLoans(uint256 collateral, uint256 debt) public {
         Quote memory quote1 = _buildAaveV3Quote(collateral, debt);
         uint256 receiverDebtBefore = debtToken.balanceOf(receiver);
-        address pod1 = _take(quote1);
+        address pod1 = _take(quote1, quote1.borrower);
 
         Quote memory quote2 = _buildAaveV3Quote(collateral, debt);
-        address pod2 = _take(quote2);
+        address pod2 = _take(quote2, quote2.borrower);
 
         assertTrue(pod1 != pod2);
         assertTrue(quote1.nonce != quote2.nonce);
@@ -200,10 +200,6 @@ contract TakeForkTest is ForkTest {
 
         (collateral, debt) = _boundHealthyPosition(collateralToken, debtToken, collateral, debt, venueId, data);
         return _buildQuote(uint256(VenueId.AAVE_V3), data, collateral, debt);
-    }
-
-    function _take(Quote memory quote) internal returns (address pod) {
-        pod = _take(quote, quote.borrower);
     }
 
     /// @dev Funds and approves exactly, takes as `caller`, and checks both approvals were fully consumed.

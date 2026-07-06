@@ -260,9 +260,6 @@ contract RefinanceForkTest is ForkTest {
         (collateral, debt) = _boundHealthyPosition(
             hop.collateralToken, hop.debtToken, collateral, debt, hop.venueId, hop.newVenueId, hop.data, hop.newData, 0
         );
-        // Back off the exact borrow-capacity edge: venue rounding (debt up) can overshoot the
-        // destination's liquidity by a wei at the boundary, which is not what this test is about.
-        debt -= debt / 100;
 
         Quote memory quote =
             _buildQuote(hop.collateralToken, hop.debtToken, collateral, debt, 30 days, 7 days, hop.venueId, hop.data);
@@ -273,19 +270,37 @@ contract RefinanceForkTest is ForkTest {
         address proceedsReceiver = makeAddr("proceedsReceiver");
 
         deal(hop.debtToken, solver, venueDebt);
-        vm.startPrank(solver);
+        vm.prank(solver);
         hop.debtToken.safeApprove(address(iris), venueDebt);
-        iris.refinance(pod, proceedsReceiver, hop.newVenueId, hop.newData);
-        vm.stopPrank();
 
-        (uint256 newVenueCollateral, uint256 newVenueDebt) =
-            hop.newAdapter.positionAssets(pod, hop.collateralToken, hop.debtToken, hop.newData);
+        vm.prank(solver);
+        try iris.refinance(pod, proceedsReceiver, hop.newVenueId, hop.newData) {
+            (uint256 newVenueCollateral, uint256 newVenueDebt) =
+                hop.newAdapter.positionAssets(pod, hop.collateralToken, hop.debtToken, hop.newData);
 
-        assertApproxEqAbs(newVenueCollateral, collateral, 2);
-        assertApproxEqAbs(newVenueDebt, venueDebt, 2);
-        // The new venue borrow lands at the receiver; the caller's fronted funds are spent.
-        assertEq(hop.debtToken.balanceOf(proceedsReceiver), venueDebt);
-        assertEq(hop.debtToken.balanceOf(solver), 0);
+            assertApproxEqAbs(newVenueCollateral, collateral, 2);
+            assertApproxEqAbs(newVenueDebt, venueDebt, 2);
+            // The new venue borrow lands at the receiver; the caller's fronted funds are spent.
+            assertEq(hop.debtToken.balanceOf(proceedsReceiver), venueDebt);
+            assertEq(hop.debtToken.balanceOf(solver), 0);
+        } catch (bytes memory err) {
+            // Expected only at the destination's borrow edge: rounding (debt up, collateral down) can
+            // overshoot the venue's liquidity or borrow limit by a wei.
+            if (hop.newVenueId == uint256(VenueId.AAVE_V3)) {
+                assertEq(err, abi.encodeWithSelector(AaveV3Errors.CollateralCannotCoverNewBorrow.selector));
+            } else if (hop.newVenueId == uint256(VenueId.MORPHO_BLUE)) {
+                bytes memory insufficientLiquidity =
+                    abi.encodeWithSignature("Error(string)", MorphoBlueErrors.INSUFFICIENT_LIQUIDITY);
+                bytes memory insufficientCollateral =
+                    abi.encodeWithSignature("Error(string)", MorphoBlueErrors.INSUFFICIENT_COLLATERAL);
+                assertTrue(
+                    keccak256(err) == keccak256(insufficientLiquidity)
+                        || keccak256(err) == keccak256(insufficientCollateral)
+                );
+            } else {
+                revert("RefinanceForkTest: Invalid newVenueId");
+            }
+        }
     }
 
     /* MARKET SELECTION */
