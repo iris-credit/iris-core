@@ -15,10 +15,9 @@ import {IVenueAdapter} from "./interfaces/IVenueAdapter.sol";
 
 /// TAKE
 /// @dev Borrower can open multiple loans for the same intent with different quotes.
-/// @dev Loan can be opened in a single tx using multicall. The expected flow for EOA multicall is:
-/// 1. permit2: permit collateral.
-/// 2. permit2: permit bond.
-/// 3. take.
+/// @dev Iris pulls the collateral from the caller via transferFrom and the bond from the solver via
+/// transferFrom with a canonical Permit2 fallback, since the solver is not in the call path to stage
+/// approvals. Batched approvals, permits and token wrapping are left to periphery contracts.
 ///
 /// REPAY
 /// @dev Early repay still owes fixed interest through maturity.
@@ -203,22 +202,6 @@ contract Iris is IIris {
 
     function getPosition(address pod) external view returns (Position memory) {
         return _position[pod];
-    }
-
-    /* MULTICALL */
-
-    /// @dev Useful for EOAs to batch calls.
-    /// @dev Does not return anything, because accounts who would use the return data would be contracts, which can do
-    /// the multicall themselves.
-    function multicall(bytes[] calldata data) external {
-        for (uint256 i = 0; i < data.length; i++) {
-            (bool success, bytes memory returnData) = address(this).delegatecall(data[i]);
-            if (!success) {
-                assembly ("memory-safe") {
-                    revert(add(32, returnData), mload(returnData))
-                }
-            }
-        }
     }
 
     /* CONSTRUCTOR */
@@ -420,7 +403,7 @@ contract Iris is IIris {
         require(pos.bondRequirement != 0 && quote.bond >= pos.bondRequirement, InsufficientBond());
 
         quote.debtToken.safeTransferFrom2(quote.solver, address(this), quote.bond);
-        quote.collateralToken.safeTransferFrom2(msg.sender, pod, quote.collateral);
+        quote.collateralToken.safeTransferFrom(msg.sender, pod, quote.collateral);
         IPod(pod)
             .delegateCall(
                 adapter,
@@ -468,7 +451,7 @@ contract Iris is IIris {
         pos.floatingLeg = 0;
         if (surplus != 0) pos.surplus = 0;
 
-        loan.debtToken.safeTransferFrom2(msg.sender, address(this), repaid);
+        loan.debtToken.safeTransferFrom(msg.sender, address(this), repaid);
         loan.debtToken.safeTransfer(pod, venueDebt);
         IPod(pod)
             .delegateCall(
@@ -526,7 +509,7 @@ contract Iris is IIris {
         pos.floatingLeg = 0;
         pos.surplus = 0;
 
-        loan.debtToken.safeTransferFrom2(msg.sender, address(this), repaid);
+        loan.debtToken.safeTransferFrom(msg.sender, address(this), repaid);
         loan.debtToken.safeTransfer(pod, venueDebt);
         // seized + surplus can exceed the venue balance by <=1 wei.
         IPod(pod)
@@ -563,7 +546,7 @@ contract Iris is IIris {
 
         pos.collateral += amount.toUint128();
 
-        loan.collateralToken.safeTransferFrom2(msg.sender, pod, amount);
+        loan.collateralToken.safeTransferFrom(msg.sender, pod, amount);
         IPod(pod)
             .delegateCall(
                 venueAdapter[pos.venueId],
@@ -619,7 +602,7 @@ contract Iris is IIris {
 
         _position[pod].bond += amount.toUint128();
 
-        _loan[pod].debtToken.safeTransferFrom2(msg.sender, address(this), amount);
+        _loan[pod].debtToken.safeTransferFrom(msg.sender, address(this), amount);
 
         emit EventsLib.SupplyBond(msg.sender, pod, amount);
     }
@@ -704,12 +687,13 @@ contract Iris is IIris {
 
     /* VENUE MANAGEMENT */
 
-    function refinance(address pod, uint256 newVenueId, bytes calldata data) external {
+    function refinance(address pod, address receiver, uint256 newVenueId, bytes calldata data) external {
         Loan storage loan = _loan[pod];
         Position storage pos = _position[pod];
         address adapter = venueAdapter[pos.venueId];
         address newAdapter = venueAdapter[newVenueId];
 
+        require(receiver != address(0), ZeroAddress());
         require(pos.lastUpdate != 0, LoanNotCreated());
         require(pos.bondRequirement != 0, ZeroAmount());
         require(_isSenderAuthorized(loan.solver), Unauthorized());
@@ -723,7 +707,7 @@ contract Iris is IIris {
         (uint256 venueCollateral, uint256 venueDebt) =
             IVenueAdapter(adapter).positionAssets(pod, loan.collateralToken, loan.debtToken, pos.data);
 
-        loan.debtToken.safeTransferFrom2(msg.sender, pod, venueDebt);
+        loan.debtToken.safeTransferFrom(msg.sender, pod, venueDebt);
         IPod(pod)
             .delegateCall(
                 adapter,
@@ -746,7 +730,7 @@ contract Iris is IIris {
                     venueCollateral,
                     loan.debtToken,
                     venueDebt,
-                    msg.sender,
+                    receiver,
                     data
                 )
             );
@@ -760,7 +744,9 @@ contract Iris is IIris {
         pos.venueId = uint8(newVenueId);
         pos.data = data;
 
-        emit EventsLib.Refinance(msg.sender, pod, newVenueId, newAdapter, newCollateralIndex, newDebtIndex, data);
+        emit EventsLib.Refinance(
+            msg.sender, pod, receiver, newVenueId, newAdapter, newCollateralIndex, newDebtIndex, data
+        );
     }
 
     function escape(address pod, address receiver) external {
@@ -781,7 +767,7 @@ contract Iris is IIris {
         pos.floatingLeg = 0;
         pos.surplus = 0;
 
-        loan.debtToken.safeTransferFrom2(msg.sender, pod, venueDebt);
+        loan.debtToken.safeTransferFrom(msg.sender, pod, venueDebt);
         IPod(pod)
             .delegateCall(
                 venueAdapter[pos.venueId],
@@ -921,13 +907,5 @@ contract Iris is IIris {
         require(account != address(0), ZeroAddress());
         claimable[token][account] += amount;
         emit EventsLib.Claimable(token, account, amount);
-    }
-
-    /* PERMIT2 */
-
-    function permit2(address token, address _owner, uint256 amount, uint256 deadline, uint8 v, bytes32 r, bytes32 s)
-        external
-    {
-        token.permit2(_owner, address(this), amount, deadline, v, r, s);
     }
 }

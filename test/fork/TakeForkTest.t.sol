@@ -6,26 +6,26 @@ import "../ForkTest.t.sol";
 import {MarketParams} from "@morpho-blue/interfaces/IMorpho.sol";
 
 import {MorphoBlueUtils} from "./helpers/MorphoBlueUtils.sol";
-import {IPermit2, PermitUtils} from "./helpers/PermitUtils.sol";
+import {IPermit2, PermitUtils, PermitSingle, PermitDetails} from "./helpers/PermitUtils.sol";
 
-contract MulticallTakeForkTest is ForkTest {
+contract TakeForkTest is ForkTest {
     using SafeTransferLib for address;
 
     uint256 internal constant DUST = 2;
     uint256 internal nextNonce;
 
-    // Opens an Aave V3 loan through a multicall.
-    function testMulticallTakeAaveV3(uint256 collateral, uint256 debt) public {
+    // Opens an Aave V3 loan.
+    function testTakeAaveV3(uint256 collateral, uint256 debt) public {
         Quote memory quote = _buildAaveV3Quote(collateral, debt);
 
         uint256 receiverDebtBefore = debtToken.balanceOf(receiver);
-        address pod = _multicall(quote);
+        address pod = _take(quote, quote.borrower);
 
         _assertOpen(pod, quote, aaveV3Adapter, receiverDebtBefore);
     }
 
-    // Opens a Morpho Blue loan through a multicall.
-    function testMulticallTakeMorphoBlue(uint256 collateral, uint256 debt, uint256 seed) public {
+    // Opens a Morpho Blue loan.
+    function testTakeMorphoBlue(uint256 collateral, uint256 debt, uint256 seed) public {
         MarketParams memory market = MorphoBlueUtils.randomMarketParams(morphoBlue, seed, config.morphoMarketIdList);
 
         collateralToken = market.collateralToken;
@@ -40,50 +40,39 @@ contract MulticallTakeForkTest is ForkTest {
         Quote memory quote = _buildQuote(uint256(VenueId.MORPHO_BLUE), data, collateral, debt);
 
         uint256 receiverDebtBefore = debtToken.balanceOf(receiver);
-        address pod = _multicall(quote);
+        address pod = _take(quote, quote.borrower);
 
         _assertOpen(pod, quote, morphoBlueAdapter, receiverDebtBefore);
     }
 
-    // Opens a loan through an authorized operator multicall.
-    function testMulticallTakeAuthorizedOperator(uint256 collateral, uint256 debt) public {
+    // Opens a loan through an authorized operator supplying the collateral.
+    function testTakeAuthorizedOperator(uint256 collateral, uint256 debt) public {
         Quote memory quote = _buildAaveV3Quote(collateral, debt);
-        (address operator, uint256 operatorPk) = makeAddrAndKey("operator");
+        address operator = makeAddr("operator");
 
         vm.prank(quote.borrower);
         iris.setAuthorization(operator, true);
 
-        bytes[] memory calls = _buildMulticall(quote, operator, operatorPk);
-
-        address pod = vm.computeCreateAddress(address(iris), vm.getNonce(address(iris)));
         uint256 receiverDebtBefore = debtToken.balanceOf(receiver);
-        uint256 operatorCollateralBefore = collateralToken.balanceOf(operator);
         uint256 borrowerCollateralBefore = collateralToken.balanceOf(quote.borrower);
 
-        vm.prank(operator);
-        iris.multicall(calls);
+        address pod = _take(quote, operator);
 
-        (uint160 operatorAllowance,,) =
-            IPermit2(PermitUtils.PERMIT2).allowance(operator, quote.collateralToken, address(iris));
-        (uint160 solverAllowance,,) =
-            IPermit2(PermitUtils.PERMIT2).allowance(quote.solver, quote.debtToken, address(iris));
-        assertEq(operatorAllowance, 0);
-        assertEq(solverAllowance, 0);
-
-        assertEq(collateralToken.balanceOf(operator), operatorCollateralBefore - quote.collateral);
+        // The operator paid the collateral; the borrower paid nothing.
+        assertEq(collateralToken.balanceOf(operator), 0);
         assertEq(collateralToken.balanceOf(quote.borrower), borrowerCollateralBefore);
 
         _assertOpen(pod, quote, aaveV3Adapter, receiverDebtBefore);
     }
 
-    // Opens multiple loans.
-    function testMulticallTakeMultipleLoans(uint256 collateral, uint256 debt) public {
+    // Opens multiple loans for the same intent with different quotes.
+    function testTakeMultipleLoans(uint256 collateral, uint256 debt) public {
         Quote memory quote1 = _buildAaveV3Quote(collateral, debt);
         uint256 receiverDebtBefore = debtToken.balanceOf(receiver);
-        address pod1 = _multicall(quote1);
+        address pod1 = _take(quote1, quote1.borrower);
 
         Quote memory quote2 = _buildAaveV3Quote(collateral, debt);
-        address pod2 = _multicall(quote2);
+        address pod2 = _take(quote2, quote2.borrower);
 
         assertTrue(pod1 != pod2);
         assertTrue(quote1.nonce != quote2.nonce);
@@ -119,10 +108,92 @@ contract MulticallTakeForkTest is ForkTest {
         assertEq(debtToken.balanceOf(address(iris)), quote1.bond + quote2.bond);
     }
 
+    // Opens a loan pulling the bond through the solver's standing Permit2 allowance, without any
+    // direct solver approval to Iris.
+    function testTakeBondPermit2Allowance(uint256 collateral, uint256 debt) public {
+        Quote memory quote = _buildAaveV3Quote(collateral, debt);
+        bytes memory signature = _signQuote(solverPk, quote);
+
+        require(quote.bond <= type(uint160).max, "TakeForkTest: Permit2 amount overflow");
+
+        deal(quote.collateralToken, quote.borrower, quote.collateral);
+        deal(quote.debtToken, quote.solver, quote.bond);
+
+        vm.startPrank(quote.solver);
+        quote.debtToken.safeApprove(PermitUtils.PERMIT2, type(uint256).max);
+        IPermit2(PermitUtils.PERMIT2)
+            .approve(quote.debtToken, address(iris), uint160(quote.bond), uint48(quote.deadline));
+        vm.stopPrank();
+
+        uint256 receiverDebtBefore = debtToken.balanceOf(receiver);
+
+        vm.startPrank(quote.borrower);
+        quote.collateralToken.safeApprove(address(iris), quote.collateral);
+        address pod = iris.take(quote, signature);
+        vm.stopPrank();
+
+        // The bond flowed through Permit2: no direct allowance existed and the Permit2 one is consumed.
+        assertEq(ERC20(quote.debtToken).allowance(quote.solver, address(iris)), 0);
+        (uint160 permit2Allowance,,) =
+            IPermit2(PermitUtils.PERMIT2).allowance(quote.solver, quote.debtToken, address(iris));
+        assertEq(permit2Allowance, 0);
+
+        _assertOpen(pod, quote, aaveV3Adapter, receiverDebtBefore);
+    }
+
+    // Opens a loan where the solver's Permit2 allowance is granted by a signature travelling with the
+    // quote, submitted to Permit2 by anyone before the take.
+    function testTakeBondPermit2Permit(uint256 collateral, uint256 debt) public {
+        Quote memory quote = _buildAaveV3Quote(collateral, debt);
+        bytes memory signature = _signQuote(solverPk, quote);
+
+        require(quote.bond <= type(uint160).max, "TakeForkTest: Permit2 amount overflow");
+
+        deal(quote.collateralToken, quote.borrower, quote.collateral);
+        deal(quote.debtToken, quote.solver, quote.bond);
+
+        // One-time Permit2 onboarding; the per-quote allowance itself is granted by signature below.
+        vm.prank(quote.solver);
+        quote.debtToken.safeApprove(PermitUtils.PERMIT2, type(uint256).max);
+
+        (,, uint48 nonce) = IPermit2(PermitUtils.PERMIT2).allowance(quote.solver, quote.debtToken, address(iris));
+        PermitSingle memory permitSingle = PermitSingle({
+            details: PermitDetails({
+                token: quote.debtToken, amount: uint160(quote.bond), expiration: uint48(quote.deadline), nonce: nonce
+            }),
+            spender: address(iris),
+            sigDeadline: quote.deadline
+        });
+        bytes32 digest = PermitUtils.getTypedDataHash(
+            IPermit2(PermitUtils.PERMIT2).DOMAIN_SEPARATOR(),
+            quote.debtToken,
+            uint160(quote.bond),
+            uint48(quote.deadline),
+            nonce,
+            address(iris),
+            quote.deadline
+        );
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(solverPk, digest);
+
+        // The permit is permissionless to submit, so it can travel with the quote.
+        IPermit2(PermitUtils.PERMIT2).permit(quote.solver, permitSingle, abi.encodePacked(r, s, v));
+
+        uint256 receiverDebtBefore = debtToken.balanceOf(receiver);
+
+        vm.startPrank(quote.borrower);
+        quote.collateralToken.safeApprove(address(iris), quote.collateral);
+        address pod = iris.take(quote, signature);
+        vm.stopPrank();
+
+        assertEq(ERC20(quote.debtToken).allowance(quote.solver, address(iris)), 0);
+
+        _assertOpen(pod, quote, aaveV3Adapter, receiverDebtBefore);
+    }
+
     /* REVERTS */
 
-    // Reverts after opening a venue-unhealthy position and rolls back the multicall.
-    function testRevertMulticallTake(uint256 collateral, uint256 debt) public {
+    // Reverts opening a venue-unhealthy position, leaving no trace.
+    function testRevertTakeVenueUnhealthy(uint256 collateral, uint256 debt) public {
         collateralToken = getAddress("WETH");
         debtToken = getAddress("USDC");
         uint256 venueId = uint256(VenueId.AAVE_V3);
@@ -151,41 +222,34 @@ contract MulticallTakeForkTest is ForkTest {
         collateral = bound(collateral, MIN_TEST_AMOUNT, maxCollateral);
 
         Quote memory quote = _buildQuote(venueId, data, collateral, debt);
-        bytes[] memory calls = _buildMulticall(quote);
+        bytes memory signature = _signQuote(solverPk, quote);
 
-        (uint160 borrowerAllowanceBefore, uint48 borrowerExpirationBefore, uint48 borrowerPermitNonceBefore) =
-            IPermit2(PermitUtils.PERMIT2).allowance(quote.borrower, quote.collateralToken, address(iris));
-        (uint160 solverAllowanceBefore, uint48 solverExpirationBefore, uint48 solverPermitNonceBefore) =
-            IPermit2(PermitUtils.PERMIT2).allowance(quote.solver, quote.debtToken, address(iris));
+        deal(quote.collateralToken, quote.borrower, quote.collateral);
+        deal(quote.debtToken, quote.solver, quote.bond);
+
+        vm.prank(quote.solver);
+        quote.debtToken.safeApprove(address(iris), quote.bond);
+        vm.prank(quote.borrower);
+        quote.collateralToken.safeApprove(address(iris), quote.collateral);
+
         uint256 irisNonceBefore = vm.getNonce(address(iris));
         address expectedPod = vm.computeCreateAddress(address(iris), irisNonceBefore);
         uint256 receiverDebtBefore = debtToken.balanceOf(receiver);
         uint256 irisBondBefore = debtToken.balanceOf(address(iris));
-        uint256 borrowerCollateralBefore = collateralToken.balanceOf(quote.borrower);
-        uint256 solverDebtBefore = debtToken.balanceOf(quote.solver);
 
         vm.expectRevert();
         vm.prank(quote.borrower);
-        iris.multicall(calls);
+        iris.take(quote, signature);
 
-        (uint160 borrowerAllowanceAfter, uint48 borrowerExpirationAfter, uint48 borrowerPermitNonceAfter) =
-            IPermit2(PermitUtils.PERMIT2).allowance(quote.borrower, quote.collateralToken, address(iris));
-        (uint160 solverAllowanceAfter, uint48 solverExpirationAfter, uint48 solverPermitNonceAfter) =
-            IPermit2(PermitUtils.PERMIT2).allowance(quote.solver, quote.debtToken, address(iris));
-
-        assertEq(borrowerAllowanceAfter, borrowerAllowanceBefore);
-        assertEq(borrowerExpirationAfter, borrowerExpirationBefore);
-        assertEq(borrowerPermitNonceAfter, borrowerPermitNonceBefore);
-        assertEq(solverAllowanceAfter, solverAllowanceBefore);
-        assertEq(solverExpirationAfter, solverExpirationBefore);
-        assertEq(solverPermitNonceAfter, solverPermitNonceBefore);
+        assertEq(ERC20(quote.collateralToken).allowance(quote.borrower, address(iris)), quote.collateral);
+        assertEq(ERC20(quote.debtToken).allowance(quote.solver, address(iris)), quote.bond);
         assertFalse(iris.isNonceUsed(quote.solver, quote.nonce));
         assertEq(vm.getNonce(address(iris)), irisNonceBefore);
         assertEq(expectedPod.code.length, 0);
         assertEq(debtToken.balanceOf(receiver), receiverDebtBefore);
         assertEq(debtToken.balanceOf(address(iris)), irisBondBefore);
-        assertEq(collateralToken.balanceOf(quote.borrower), borrowerCollateralBefore);
-        assertEq(debtToken.balanceOf(quote.solver), solverDebtBefore);
+        assertEq(collateralToken.balanceOf(quote.borrower), quote.collateral);
+        assertEq(debtToken.balanceOf(quote.solver), quote.bond);
 
         (uint256 venueCollateral, uint256 venueDebt) =
             aaveV3Adapter.positionAssets(expectedPod, quote.collateralToken, quote.debtToken, data);
@@ -193,32 +257,16 @@ contract MulticallTakeForkTest is ForkTest {
         assertEq(venueDebt, 0);
     }
 
-    // Reverts unauthorized multicall caller.
-    function testRevertMulticallTakeUnauthorized(uint256 collateral, uint256 debt) public {
+    // Reverts unauthorized take caller.
+    function testRevertTakeUnauthorized(uint256 collateral, uint256 debt) public {
         Quote memory quote = _buildAaveV3Quote(collateral, debt);
-        bytes[] memory calls = _buildMulticall(quote);
-
-        (uint160 borrowerAllowanceBefore, uint48 borrowerExpirationBefore, uint48 borrowerPermitNonceBefore) =
-            IPermit2(PermitUtils.PERMIT2).allowance(quote.borrower, quote.collateralToken, address(iris));
-        (uint160 solverAllowanceBefore, uint48 solverExpirationBefore, uint48 solverPermitNonceBefore) =
-            IPermit2(PermitUtils.PERMIT2).allowance(quote.solver, quote.debtToken, address(iris));
+        bytes memory signature = _signQuote(solverPk, quote);
 
         address unauthorizer = makeAddr("unauthorizer");
         vm.expectRevert(IIris.Unauthorized.selector);
         vm.prank(unauthorizer);
-        iris.multicall(calls);
+        iris.take(quote, signature);
 
-        (uint160 borrowerAllowanceAfter, uint48 borrowerExpirationAfter, uint48 borrowerPermitNonceAfter) =
-            IPermit2(PermitUtils.PERMIT2).allowance(quote.borrower, quote.collateralToken, address(iris));
-        (uint160 solverAllowanceAfter, uint48 solverExpirationAfter, uint48 solverPermitNonceAfter) =
-            IPermit2(PermitUtils.PERMIT2).allowance(quote.solver, quote.debtToken, address(iris));
-
-        assertEq(borrowerAllowanceAfter, borrowerAllowanceBefore);
-        assertEq(borrowerExpirationAfter, borrowerExpirationBefore);
-        assertEq(borrowerPermitNonceAfter, borrowerPermitNonceBefore);
-        assertEq(solverAllowanceAfter, solverAllowanceBefore);
-        assertEq(solverExpirationAfter, solverExpirationBefore);
-        assertEq(solverPermitNonceAfter, solverPermitNonceBefore);
         assertFalse(iris.isNonceUsed(quote.solver, quote.nonce));
     }
 
@@ -237,55 +285,23 @@ contract MulticallTakeForkTest is ForkTest {
         return _buildQuote(uint256(VenueId.AAVE_V3), data, collateral, debt);
     }
 
-    function _multicall(Quote memory quote) internal returns (address pod) {
-        bytes[] memory calls = _buildMulticall(quote);
-        pod = vm.computeCreateAddress(address(iris), vm.getNonce(address(iris)));
-
-        vm.prank(quote.borrower);
-        iris.multicall(calls);
-
-        (uint160 borrowerAllowance,,) =
-            IPermit2(PermitUtils.PERMIT2).allowance(quote.borrower, quote.collateralToken, address(iris));
-        (uint160 solverAllowance,,) =
-            IPermit2(PermitUtils.PERMIT2).allowance(quote.solver, quote.debtToken, address(iris));
-
-        assertEq(borrowerAllowance, 0);
-        assertEq(solverAllowance, 0);
-    }
-
-    function _buildMulticall(Quote memory quote) internal returns (bytes[] memory data) {
-        return _buildMulticall(quote, quote.borrower, borrowerPk);
-    }
-
-    function _buildMulticall(Quote memory quote, address caller, uint256 callerPk)
-        internal
-        returns (bytes[] memory calls)
-    {
-        bytes memory quoteSignature = _signQuote(solverPk, quote);
-        uint256 permitDeadline = quote.deadline;
+    /// @dev Funds and approves exactly, takes as `caller`, and checks both approvals were fully consumed.
+    function _take(Quote memory quote, address caller) internal returns (address pod) {
+        bytes memory signature = _signQuote(solverPk, quote);
 
         deal(quote.collateralToken, caller, quote.collateral);
         deal(quote.debtToken, quote.solver, quote.bond);
 
-        vm.prank(caller);
-        quote.collateralToken.safeApprove(PermitUtils.PERMIT2, type(uint256).max);
-
         vm.prank(quote.solver);
-        quote.debtToken.safeApprove(PermitUtils.PERMIT2, type(uint256).max);
+        quote.debtToken.safeApprove(address(iris), quote.bond);
 
-        (uint8 callerV, bytes32 callerR, bytes32 callerS) =
-            _signPermit2(callerPk, caller, quote.collateralToken, quote.collateral, permitDeadline);
-        (uint8 solverV, bytes32 solverR, bytes32 solverS) =
-            _signPermit2(solverPk, quote.solver, quote.debtToken, quote.bond, permitDeadline);
+        vm.startPrank(caller);
+        quote.collateralToken.safeApprove(address(iris), quote.collateral);
+        pod = iris.take(quote, signature);
+        vm.stopPrank();
 
-        calls = new bytes[](3);
-        calls[0] = abi.encodeCall(
-            IIris.permit2, (quote.collateralToken, caller, quote.collateral, permitDeadline, callerV, callerR, callerS)
-        );
-        calls[1] = abi.encodeCall(
-            IIris.permit2, (quote.debtToken, quote.solver, quote.bond, permitDeadline, solverV, solverR, solverS)
-        );
-        calls[2] = abi.encodeCall(IIris.take, (quote, quoteSignature));
+        assertEq(ERC20(quote.collateralToken).allowance(caller, address(iris)), 0);
+        assertEq(ERC20(quote.debtToken).allowance(quote.solver, address(iris)), 0);
     }
 
     function _buildQuote(uint256 venueId, bytes memory data, uint256 collateral, uint256 debt)
@@ -311,27 +327,6 @@ contract MulticallTakeForkTest is ForkTest {
         quote.deadline = block.timestamp;
         quote.nonce = nextNonce++;
         quote.data = data;
-    }
-
-    function _signPermit2(uint256 privateKey, address signer, address token, uint256 amount, uint256 sigDeadline)
-        internal
-        view
-        returns (uint8 v, bytes32 r, bytes32 s)
-    {
-        require(amount <= type(uint160).max, "MulticallTakeForkTest: Permit2 amount overflow");
-
-        (,, uint48 nonce) = IPermit2(PermitUtils.PERMIT2).allowance(signer, token, address(iris));
-        bytes32 digest = PermitUtils.getTypedDataHash(
-            IPermit2(PermitUtils.PERMIT2).DOMAIN_SEPARATOR(),
-            token,
-            uint160(amount),
-            type(uint48).max,
-            nonce,
-            address(iris),
-            sigDeadline
-        );
-
-        (v, r, s) = vm.sign(privateKey, digest);
     }
 
     function _assertOpen(address pod, Quote memory quote, IVenueAdapter adapter, uint256 receiverDebtBefore)

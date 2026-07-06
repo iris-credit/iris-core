@@ -252,9 +252,11 @@ contract IrisInvariantTest is InvariantTest {
         iris.rebase(pod);
     }
 
-    function refinance(uint256 podSeed) external logCall("refinance") {
+    function refinance(uint256 podSeed, uint256 receiverSeed) external logCall("refinance") {
         address pod = _randomOpenPod(podSeed);
         if (pod == address(0)) return;
+
+        (address receiver,) = _randomUser(receiverSeed);
 
         Loan memory loan = iris.getLoan(pod);
         Position memory pos = iris.getPosition(pod);
@@ -275,7 +277,7 @@ contract IrisInvariantTest is InvariantTest {
         deal(loan.debtToken, msg.sender, venueDebt);
         _approveIris(loan.debtToken, msg.sender, venueDebt);
 
-        _refinance(pod, newVenueId, data);
+        _refinance(pod, receiver, newVenueId, data);
     }
 
     function escape(uint256 podSeed, uint256 receiverSeed) external logCall("escape") {
@@ -328,9 +330,12 @@ contract IrisInvariantTest is InvariantTest {
         iris.withdrawBond(pod, amount, receiver);
     }
 
-    function _refinance(address pod, uint256 venueId, bytes memory data) internal authorized(iris.getLoan(pod).solver) {
+    function _refinance(address pod, address receiver, uint256 venueId, bytes memory data)
+        internal
+        authorized(iris.getLoan(pod).solver)
+    {
         vm.prank(msg.sender);
-        iris.refinance(pod, venueId, data);
+        iris.refinance(pod, receiver, venueId, data);
     }
 
     function _escape(address pod, address receiver) internal authorized(iris.getLoan(pod).borrower) {

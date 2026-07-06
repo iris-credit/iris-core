@@ -1,12 +1,27 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.0;
 
+struct PermitDetails {
+    address token;
+    uint160 amount;
+    uint48 expiration;
+    uint48 nonce;
+}
+
+struct PermitSingle {
+    PermitDetails details;
+    address spender;
+    uint256 sigDeadline;
+}
+
 interface IPermit2 {
     function DOMAIN_SEPARATOR() external view returns (bytes32);
     function allowance(address owner, address token, address spender)
         external
         view
         returns (uint160 amount, uint48 expiration, uint48 nonce);
+    function approve(address token, address spender, uint160 amount, uint48 expiration) external;
+    function permit(address owner, PermitSingle memory permitSingle, bytes calldata signature) external;
 }
 
 library PermitUtils {
