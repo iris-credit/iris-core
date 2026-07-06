@@ -39,12 +39,6 @@ library ErrorsLib {
     /// @dev Thrown when an action ends up minting/burning more shares than a given slippage.
     error SlippageExceeded();
 
-    /// @dev Thrown when a call to depositFor fails.
-    error DepositFailed();
-
-    /// @dev Thrown when a call to withdrawTo fails.
-    error WithdrawFailed();
-
     /* IRIS ADAPTER */
 
     /// @dev Thrown when the initiator is not authorized to act on a loan.
