@@ -15,9 +15,9 @@ import {IVenueAdapter} from "./interfaces/IVenueAdapter.sol";
 
 /// TAKE
 /// @dev Borrower can open multiple loans for the same intent with different quotes.
-/// @dev Iris pulls the collateral from the caller and the bond from the solver via transferFrom, so both
-/// must have approved Iris beforehand. Batched approvals, permits and token wrapping are left to
-/// periphery contracts.
+/// @dev Iris pulls the collateral from the caller via transferFrom and the bond from the solver via
+/// transferFrom with a canonical Permit2 fallback, since the solver is not in the call path to stage
+/// approvals. Batched approvals, permits and token wrapping are left to periphery contracts.
 ///
 /// REPAY
 /// @dev Early repay still owes fixed interest through maturity.
@@ -402,7 +402,7 @@ contract Iris is IIris {
 
         require(pos.bondRequirement != 0 && quote.bond >= pos.bondRequirement, InsufficientBond());
 
-        quote.debtToken.safeTransferFrom(quote.solver, address(this), quote.bond);
+        quote.debtToken.safeTransferFrom2(quote.solver, address(this), quote.bond);
         quote.collateralToken.safeTransferFrom(msg.sender, pod, quote.collateral);
         IPod(pod)
             .delegateCall(

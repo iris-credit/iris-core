@@ -6,6 +6,7 @@ import "../ForkTest.t.sol";
 import {MarketParams} from "@morpho-blue/interfaces/IMorpho.sol";
 
 import {MorphoBlueUtils} from "./helpers/MorphoBlueUtils.sol";
+import {IPermit2, PermitUtils, PermitSingle, PermitDetails} from "./helpers/PermitUtils.sol";
 
 contract TakeForkTest is ForkTest {
     using SafeTransferLib for address;
@@ -105,6 +106,88 @@ contract TakeForkTest is ForkTest {
 
         assertEq(debtToken.balanceOf(receiver), receiverDebtBefore + quote1.debt + quote2.debt);
         assertEq(debtToken.balanceOf(address(iris)), quote1.bond + quote2.bond);
+    }
+
+    // Opens a loan pulling the bond through the solver's standing Permit2 allowance, without any
+    // direct solver approval to Iris.
+    function testTakeBondPermit2Allowance(uint256 collateral, uint256 debt) public {
+        Quote memory quote = _buildAaveV3Quote(collateral, debt);
+        bytes memory signature = _signQuote(solverPk, quote);
+
+        require(quote.bond <= type(uint160).max, "TakeForkTest: Permit2 amount overflow");
+
+        deal(quote.collateralToken, quote.borrower, quote.collateral);
+        deal(quote.debtToken, quote.solver, quote.bond);
+
+        vm.startPrank(quote.solver);
+        quote.debtToken.safeApprove(PermitUtils.PERMIT2, type(uint256).max);
+        IPermit2(PermitUtils.PERMIT2)
+            .approve(quote.debtToken, address(iris), uint160(quote.bond), uint48(quote.deadline));
+        vm.stopPrank();
+
+        uint256 receiverDebtBefore = debtToken.balanceOf(receiver);
+
+        vm.startPrank(quote.borrower);
+        quote.collateralToken.safeApprove(address(iris), quote.collateral);
+        address pod = iris.take(quote, signature);
+        vm.stopPrank();
+
+        // The bond flowed through Permit2: no direct allowance existed and the Permit2 one is consumed.
+        assertEq(ERC20(quote.debtToken).allowance(quote.solver, address(iris)), 0);
+        (uint160 permit2Allowance,,) =
+            IPermit2(PermitUtils.PERMIT2).allowance(quote.solver, quote.debtToken, address(iris));
+        assertEq(permit2Allowance, 0);
+
+        _assertOpen(pod, quote, aaveV3Adapter, receiverDebtBefore);
+    }
+
+    // Opens a loan where the solver's Permit2 allowance is granted by a signature travelling with the
+    // quote, submitted to Permit2 by anyone before the take.
+    function testTakeBondPermit2Permit(uint256 collateral, uint256 debt) public {
+        Quote memory quote = _buildAaveV3Quote(collateral, debt);
+        bytes memory signature = _signQuote(solverPk, quote);
+
+        require(quote.bond <= type(uint160).max, "TakeForkTest: Permit2 amount overflow");
+
+        deal(quote.collateralToken, quote.borrower, quote.collateral);
+        deal(quote.debtToken, quote.solver, quote.bond);
+
+        // One-time Permit2 onboarding; the per-quote allowance itself is granted by signature below.
+        vm.prank(quote.solver);
+        quote.debtToken.safeApprove(PermitUtils.PERMIT2, type(uint256).max);
+
+        (,, uint48 nonce) = IPermit2(PermitUtils.PERMIT2).allowance(quote.solver, quote.debtToken, address(iris));
+        PermitSingle memory permitSingle = PermitSingle({
+            details: PermitDetails({
+                token: quote.debtToken, amount: uint160(quote.bond), expiration: uint48(quote.deadline), nonce: nonce
+            }),
+            spender: address(iris),
+            sigDeadline: quote.deadline
+        });
+        bytes32 digest = PermitUtils.getTypedDataHash(
+            IPermit2(PermitUtils.PERMIT2).DOMAIN_SEPARATOR(),
+            quote.debtToken,
+            uint160(quote.bond),
+            uint48(quote.deadline),
+            nonce,
+            address(iris),
+            quote.deadline
+        );
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(solverPk, digest);
+
+        // The permit is permissionless to submit, so it can travel with the quote.
+        IPermit2(PermitUtils.PERMIT2).permit(quote.solver, permitSingle, abi.encodePacked(r, s, v));
+
+        uint256 receiverDebtBefore = debtToken.balanceOf(receiver);
+
+        vm.startPrank(quote.borrower);
+        quote.collateralToken.safeApprove(address(iris), quote.collateral);
+        address pod = iris.take(quote, signature);
+        vm.stopPrank();
+
+        assertEq(ERC20(quote.debtToken).allowance(quote.solver, address(iris)), 0);
+
+        _assertOpen(pod, quote, aaveV3Adapter, receiverDebtBefore);
     }
 
     /* REVERTS */
