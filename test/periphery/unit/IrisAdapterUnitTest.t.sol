@@ -58,7 +58,7 @@ contract IrisAdapterUnitTest is PeripheryUnitTest {
 
     /// @dev Opening a loan for another borrower is allowed: the staged collateral accrues to the
     /// borrower, so it is a donation.
-    function testIrisTakeDonation(uint256 collateral, uint256 debt, uint256 bond) public {
+    function testIrisTakeOnBehalf(uint256 collateral, uint256 debt, uint256 bond) public {
         (collateral, debt, bond) = _boundQuoteAmounts(collateral, debt, bond);
         (Quote memory quote, bytes memory signature) = _signedQuote(collateral, debt, bond);
 
@@ -114,6 +114,23 @@ contract IrisAdapterUnitTest is PeripheryUnitTest {
         deal(collateralToken, borrower, amount);
 
         bundle.push(_erc20TransferFrom(collateralToken, amount));
+        bundle.push(_irisSupplyCollateral(pod, collateralToken, amount));
+
+        vm.prank(borrower);
+        bundler3.multicall(bundle);
+
+        assertEq(iris.getPosition(pod).collateral, collateral + amount, "position.collateral");
+        assertEq(ERC20(collateralToken).balanceOf(address(generalAdapter1)), 0, "collateral.balanceOf(adapter)");
+    }
+
+    function testIrisSupplyCollateralMax(uint256 collateral, uint256 debt, uint256 bond, uint256 amount) public {
+        (collateral, debt, bond) = _boundQuoteAmounts(collateral, debt, bond);
+        amount = bound(amount, MIN_TEST_AMOUNT, MAX_TEST_AMOUNT);
+        (address pod,) = _openLoan(collateral, debt, bond);
+
+        deal(collateralToken, borrower, amount);
+
+        bundle.push(_erc20TransferFrom(collateralToken, amount));
         bundle.push(_irisSupplyCollateral(pod, collateralToken, type(uint256).max));
 
         vm.prank(borrower);
@@ -123,7 +140,7 @@ contract IrisAdapterUnitTest is PeripheryUnitTest {
         assertEq(ERC20(collateralToken).balanceOf(address(generalAdapter1)), 0, "collateral.balanceOf(adapter)");
     }
 
-    function testIrisSupplyCollateralZeroAmount(uint256 collateral, uint256 debt, uint256 bond) public {
+    function testIrisSupplyCollateralZero(uint256 collateral, uint256 debt, uint256 bond) public {
         (collateral, debt, bond) = _boundQuoteAmounts(collateral, debt, bond);
         (address pod,) = _openLoan(collateral, debt, bond);
 
@@ -171,6 +188,23 @@ contract IrisAdapterUnitTest is PeripheryUnitTest {
         deal(debtToken, borrower, amount);
 
         bundle.push(_erc20TransferFrom(debtToken, amount));
+        bundle.push(_irisSupplyBond(pod, debtToken, amount));
+
+        vm.prank(borrower);
+        bundler3.multicall(bundle);
+
+        assertEq(iris.getPosition(pod).bond, bond + amount, "position.bond");
+        assertEq(ERC20(debtToken).balanceOf(address(generalAdapter1)), 0, "debt.balanceOf(adapter)");
+    }
+
+    function testIrisSupplyBondMax(uint256 collateral, uint256 debt, uint256 bond, uint256 amount) public {
+        (collateral, debt, bond) = _boundQuoteAmounts(collateral, debt, bond);
+        amount = bound(amount, MIN_TEST_AMOUNT, MAX_TEST_AMOUNT);
+        (address pod,) = _openLoan(collateral, debt, bond);
+
+        deal(debtToken, borrower, amount);
+
+        bundle.push(_erc20TransferFrom(debtToken, amount));
         bundle.push(_irisSupplyBond(pod, debtToken, type(uint256).max));
 
         vm.prank(borrower);
@@ -180,7 +214,7 @@ contract IrisAdapterUnitTest is PeripheryUnitTest {
         assertEq(ERC20(debtToken).balanceOf(address(generalAdapter1)), 0, "debt.balanceOf(adapter)");
     }
 
-    function testIrisSupplyBondZeroAmount(uint256 collateral, uint256 debt, uint256 bond) public {
+    function testIrisSupplyBondZero(uint256 collateral, uint256 debt, uint256 bond) public {
         (collateral, debt, bond) = _boundQuoteAmounts(collateral, debt, bond);
         (address pod,) = _openLoan(collateral, debt, bond);
 
@@ -311,34 +345,49 @@ contract IrisAdapterUnitTest is PeripheryUnitTest {
 
     /* ACCESS */
 
-    function testIrisActionsOnlyBundler3(address pod, uint256 amount) public {
+    function testIrisTakeUnauthorized() public {
         Quote memory quote;
-        bytes memory signature;
 
         vm.expectRevert(ErrorsLib.UnauthorizedSender.selector);
-        generalAdapter1.irisTake(quote, signature);
+        generalAdapter1.irisTake(quote, hex"");
+    }
 
+    function testIrisRepayUnauthorized(address pod) public {
         vm.expectRevert(ErrorsLib.UnauthorizedSender.selector);
         generalAdapter1.irisRepay(pod, debtToken);
+    }
 
+    function testIrisSupplyCollateralUnauthorized(address pod, uint256 amount) public {
         vm.expectRevert(ErrorsLib.UnauthorizedSender.selector);
         generalAdapter1.irisSupplyCollateral(pod, collateralToken, amount);
+    }
 
+    function testIrisWithdrawCollateralUnauthorized(address pod, uint256 amount) public {
         vm.expectRevert(ErrorsLib.UnauthorizedSender.selector);
         generalAdapter1.irisWithdrawCollateral(pod, amount, RECEIVER);
+    }
 
+    function testIrisSupplyBondUnauthorized(address pod, uint256 amount) public {
         vm.expectRevert(ErrorsLib.UnauthorizedSender.selector);
         generalAdapter1.irisSupplyBond(pod, debtToken, amount);
+    }
 
+    function testIrisWithdrawBondUnauthorized(address pod, uint256 amount) public {
         vm.expectRevert(ErrorsLib.UnauthorizedSender.selector);
         generalAdapter1.irisWithdrawBond(pod, amount, RECEIVER);
+    }
 
+    function testIrisRefinanceUnauthorized(address pod) public {
         vm.expectRevert(ErrorsLib.UnauthorizedSender.selector);
         generalAdapter1.irisRefinance(pod, RECEIVER, 1, "");
+    }
 
+    function testIrisEscapeUnauthorized(address pod) public {
         vm.expectRevert(ErrorsLib.UnauthorizedSender.selector);
         generalAdapter1.irisEscape(pod, RECEIVER);
+    }
 
+    function testIrisClaimUnauthorized(uint256 amount) public {
         vm.expectRevert(ErrorsLib.UnauthorizedSender.selector);
         generalAdapter1.irisClaim(debtToken, amount, RECEIVER);
     }

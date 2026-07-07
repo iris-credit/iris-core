@@ -12,7 +12,6 @@ contract ConcreteCoreAdapter is CoreAdapter {
 contract CoreAdapterUnitTest is PeripheryUnitTest {
     address internal immutable USER = makeAddr("User");
     address internal immutable RECEIVER = makeAddr("Receiver");
-
     CoreAdapter internal coreAdapter;
 
     function setUp() public override {

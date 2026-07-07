@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity ^0.8.0;
+pragma solidity 0.8.35;
 
 // Pose as existing contracts and make them do unexpected things.
 contract FunctionMocker {

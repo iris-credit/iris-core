@@ -19,12 +19,11 @@ contract Permit2AdapterForkTest is PeripheryForkTest {
         usdc = getAddress("USDC");
     }
 
-    function testTransferWithPermit2(uint256 amount, uint256 deadline) public {
+    function testTransferWithPermit2(uint256 amount) public {
         uint256 privateKey = _boundPrivateKey(pickUint());
         address user = vm.addr(privateKey);
 
         amount = bound(amount, MIN_TEST_AMOUNT, MAX_TEST_AMOUNT);
-        deadline = bound(deadline, block.timestamp, type(uint48).max);
 
         bundle.push(_approve2(privateKey, usdc, amount, 0, false));
         bundle.push(_permit2TransferFrom(usdc, amount));

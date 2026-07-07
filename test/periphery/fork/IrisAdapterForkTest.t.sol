@@ -28,7 +28,7 @@ contract IrisAdapterForkTest is PeripheryForkTest {
 
     /* TAKE */
 
-    function testTakeBundle(uint256 collateral, uint256 debt) public {
+    function testTake(uint256 collateral, uint256 debt) public {
         Quote memory quote = _buildAaveV3Quote(collateral, debt);
         bytes memory signature = _signQuote(solverPk, quote);
         _fundSolverBond(quote);
@@ -53,7 +53,7 @@ contract IrisAdapterForkTest is PeripheryForkTest {
         assertEq(ERC20(wEth).balanceOf(address(generalAdapter1)), 0, "collateral.balanceOf(adapter)");
     }
 
-    function testTakeCollateralViaPermit2(uint256 collateral, uint256 debt) public {
+    function testTakeWithPermit2(uint256 collateral, uint256 debt) public {
         Quote memory quote = _buildAaveV3Quote(collateral, debt);
         bytes memory signature = _signQuote(solverPk, quote);
         _fundSolverBond(quote);
@@ -81,7 +81,7 @@ contract IrisAdapterForkTest is PeripheryForkTest {
 
     /* REPAY */
 
-    function testRepayBundleWithSweep(uint256 collateral, uint256 debt) public {
+    function testRepay(uint256 collateral, uint256 debt) public {
         Quote memory quote = _buildAaveV3Quote(collateral, debt);
         address pod = _openLoan(quote);
 
@@ -134,7 +134,7 @@ contract IrisAdapterForkTest is PeripheryForkTest {
 
     /* VENUE MANAGEMENT */
 
-    function testRefinanceFloatBundle(uint256 collateral, uint256 debt) public {
+    function testRefinance(uint256 collateral, uint256 debt) public {
         (Quote memory quote, bytes memory morphoData) = _buildHopQuote(collateral, debt);
         address pod = _openLoan(quote);
 
@@ -157,7 +157,7 @@ contract IrisAdapterForkTest is PeripheryForkTest {
         assertEq(ERC20(quote.debtToken).balanceOf(solver), venueDebt, "debt.balanceOf(solver)");
     }
 
-    function testRefinanceFlashLoanBundle(uint256 collateral, uint256 debt) public {
+    function testRefinanceWithFlashLoan(uint256 collateral, uint256 debt) public {
         (Quote memory quote, bytes memory morphoData) = _buildHopQuote(collateral, debt);
         address pod = _openLoan(quote);
 
@@ -180,7 +180,7 @@ contract IrisAdapterForkTest is PeripheryForkTest {
         assertEq(ERC20(quote.debtToken).balanceOf(address(generalAdapter1)), 0, "debt.balanceOf(adapter)");
     }
 
-    function testEscapeBundleToNative(uint256 collateral, uint256 debt) public {
+    function testEscapeToNative(uint256 collateral, uint256 debt) public {
         Quote memory quote = _buildAaveV3Quote(collateral, debt);
         address pod = _openLoan(quote);
 
@@ -208,7 +208,7 @@ contract IrisAdapterForkTest is PeripheryForkTest {
 
     /* INTEREST */
 
-    function testClaimBundle(uint256 amount) public {
+    function testClaim(uint256 amount) public {
         amount = bound(amount, MIN_TEST_AMOUNT, MAX_TEST_AMOUNT);
 
         StorageUtils.setClaimable(address(iris), usdc, borrower, amount);
@@ -259,11 +259,15 @@ contract IrisAdapterForkTest is PeripheryForkTest {
         returns (Quote memory quote, bytes memory morphoData)
     {
         MarketParams memory marketParams;
+        bool found;
         for (uint256 i; i < config.morphoMarketIdList.length; i++) {
             marketParams = MorphoBlueUtils.idToMarketParams(morphoBlue, config.morphoMarketIdList[i]);
-            if (aaveV3Adapter.lltv(marketParams.collateralToken, marketParams.loanToken, "") != 0) break;
+            if (aaveV3Adapter.lltv(marketParams.collateralToken, marketParams.loanToken, "") != 0) {
+                found = true;
+                break;
+            }
         }
-        require(marketParams.collateralToken != address(0), "IrisAdapterForkTest: no hop market");
+        require(found, "IrisAdapterForkTest: no hop market");
 
         vm.prank(owner);
         blm.setParams(marketParams.loanToken, DEFAULT_SLOPE, DEFAULT_INTERCEPT);

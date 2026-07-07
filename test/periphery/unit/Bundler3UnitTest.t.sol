@@ -14,7 +14,6 @@ contract ConcreteCoreAdapter is CoreAdapter {
 
 contract Bundler3UnitTest is PeripheryUnitTest {
     address internal immutable USER = makeAddr("User");
-
     AdapterMock internal adapterMock;
     Call[] internal callbackBundle2;
     address internal empty;
