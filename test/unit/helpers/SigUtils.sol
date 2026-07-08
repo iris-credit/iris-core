@@ -4,6 +4,18 @@ pragma solidity ^0.8.0;
 import {AUTHORIZATION_TYPEHASH, QUOTE_TYPEHASH} from "../../../src/libraries/ConstantsLib.sol";
 import {Authorization, Quote} from "../../../src/interfaces/IIris.sol";
 
+bytes32 constant PERMIT_TYPEHASH =
+    keccak256("Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)");
+
+/// @dev EIP-2612 permit message.
+struct Permit {
+    address owner;
+    address spender;
+    uint256 value;
+    uint256 nonce;
+    uint256 deadline;
+}
+
 library SigUtils {
     /// @dev Computes the hash of the EIP-712 encoded data.
     function getTypedDataHash(bytes32 domainSeparator, Authorization memory authorization)
@@ -17,6 +29,17 @@ library SigUtils {
     /// @dev Computes the hash of the EIP-712 encoded data.
     function getTypedDataHash(bytes32 domainSeparator, Quote memory quote) internal pure returns (bytes32) {
         return keccak256(bytes.concat("\x19\x01", domainSeparator, hashStruct(quote)));
+    }
+
+    /// @dev Computes the hash of the EIP-712 encoded data.
+    function getTypedDataHash(bytes32 domainSeparator, Permit memory permit) internal pure returns (bytes32) {
+        return keccak256(bytes.concat("\x19\x01", domainSeparator, hashStruct(permit)));
+    }
+
+    function hashStruct(Permit memory permit) internal pure returns (bytes32) {
+        return keccak256(
+            abi.encode(PERMIT_TYPEHASH, permit.owner, permit.spender, permit.value, permit.nonce, permit.deadline)
+        );
     }
 
     function hashStruct(Authorization memory authorization) internal pure returns (bytes32) {
