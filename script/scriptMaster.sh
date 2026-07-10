@@ -42,6 +42,12 @@ case "$ENV_CHOICE" in
   "Tenderly"*)
     ENVIRONMENT="tenderly"
     [[ -n "${TENDERLY_RPC_URL:-}" ]] || { error "TENDERLY_RPC_URL not set in .env"; exit 1; }
+    # Probe the endpoint before broadcasting (mirrors runAnvil): _chain() also accepts chain-id 1,
+    # so a mis-set TENDERLY_RPC_URL pointing at mainnet would broadcast real transactions with the
+    # deployer key without ever hitting the production confirm.
+    chainId="$(cast chain-id --rpc-url "$TENDERLY_RPC_URL" 2>/dev/null || true)"
+    [[ -n "$chainId" ]] || { error "cannot reach TENDERLY_RPC_URL (cast chain-id failed)"; exit 1; }
+    [[ "$chainId" == "9991" ]] || { error "TENDERLY_RPC_URL serves chain-id $chainId (expected vnet 9991)"; exit 1; }
     # Persistent mainnet fork, signed with the real deployer key. Delete deployments/9991.json when
     # the vnet is recreated, since a fresh vnet has none of the book's contracts.
     info "tenderly vnet: broadcasting to virtual_ethereum"
