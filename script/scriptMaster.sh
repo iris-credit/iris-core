@@ -43,6 +43,7 @@ forge build
 ACTION=$(gum choose \
   "Deploy (Pod, Iris, adapters, BLMs)" \
   "Redeploy Iris (one-shot venue/market/LLTV/BLM/fee setup)" \
+  "Deploy periphery (Bundler3 + adapter)" \
   "Add / upgrade venue" \
   "Enable market" \
   "Enable bond LLTV" \
@@ -77,6 +78,11 @@ case "$ACTION" in
     VENUE_IDS="$VENUE_IDS" ADAPTERS="$ADAPTERS" MARKET_DATA="$MARKET_DATA" BOND_LLTV="$BOND_LLTV" \
       BLM="Blm" FEE="$FEE" FEE_RECIPIENT="$FEE_RECIPIENT" \
       forge script script/RedeployIris.s.sol $(rpcArgs)
+    ;;
+  "Deploy periphery"*)
+    # Permissionless: no Iris owner op. The script reads config itself and self-heals a stale adapter
+    # binding after an Iris redeploy.
+    forge script script/DeployPeriphery.s.sol $(rpcArgs)
     ;;
   "Add / upgrade venue")
     VENUE=$(jq -r '.venues | keys_unsorted[]' "config/$CHAIN.json" | gum choose --header "Venue (label -> id)")
