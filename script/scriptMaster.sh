@@ -24,18 +24,33 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Production broadcasts to mainnet; staging broadcasts to a local forked anvil (chain-id 31337) so its
-# deployment book (deployments/31337.json) stays isolated from production's deployments/1.json.
-if [[ "${PRODUCTION:-false}" == "true" ]]; then
-  ENVIRONMENT="production"
-  gum confirm "PRODUCTION run against Ethereum mainnet. Continue?" || exit 1
-else
-  ENVIRONMENT="staging"
-  info "staging: forked anvil at chain-id 31337"
-  runAnvil
-  PRIVATE_KEY="$ANVIL_PK" # funded anvil account; staging never uses the production key or a Ledger
-  USE_LEDGER="false"
-fi
+# Each environment broadcasts to its own chain id, so every fork keeps an isolated deployment book:
+# anvil -> deployments/31337.json, tenderly vnet -> deployments/9991.json, production -> deployments/1.json.
+ENV_CHOICE=$(gum choose --header "Environment" \
+  "Local anvil (chain 31337)" \
+  "Tenderly vnet (chain 9991)" \
+  "Production (Ethereum mainnet)")
+
+case "$ENV_CHOICE" in
+  "Local anvil"*)
+    ENVIRONMENT="staging"
+    info "staging: forked anvil at chain-id 31337"
+    runAnvil
+    PRIVATE_KEY="$ANVIL_PK" # funded anvil account; staging never uses the production key or a Ledger
+    USE_LEDGER="false"
+    ;;
+  "Tenderly"*)
+    ENVIRONMENT="tenderly"
+    [[ -n "${TENDERLY_RPC_URL:-}" ]] || { error "TENDERLY_RPC_URL not set in .env"; exit 1; }
+    # Persistent mainnet fork, signed with the real deployer key. Delete deployments/9991.json when
+    # the vnet is recreated, since a fresh vnet has none of the book's contracts.
+    info "tenderly vnet: broadcasting to virtual_ethereum"
+    ;;
+  "Production"*)
+    ENVIRONMENT="production"
+    gum confirm "PRODUCTION run against Ethereum mainnet. Continue?" || exit 1
+    ;;
+esac
 export ENVIRONMENT CHAIN PRIVATE_KEY="${PRIVATE_KEY:-}" USE_LEDGER="${USE_LEDGER:-false}" VERIFY="${VERIFY:-false}"
 
 forge build
