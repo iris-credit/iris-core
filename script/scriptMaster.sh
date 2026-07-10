@@ -56,6 +56,12 @@ ACTION=$(gum choose \
 
 # Every owner op lives in SetConfig.s.sol, selected by --sig.
 case "$ACTION" in
+  # Before the "Deploy"* arm, which would otherwise swallow this prefix.
+  "Deploy periphery"*)
+    # Permissionless: no Iris owner op. The script reads config itself and self-heals a stale adapter
+    # binding after an Iris redeploy.
+    forge script script/DeployPeriphery.s.sol $(rpcArgs)
+    ;;
   "Deploy"*)
     forge script script/Deploy.s.sol $(rpcArgs)
     ;;
@@ -78,11 +84,6 @@ case "$ACTION" in
     VENUE_IDS="$VENUE_IDS" ADAPTERS="$ADAPTERS" MARKET_DATA="$MARKET_DATA" BOND_LLTV="$BOND_LLTV" \
       BLM="Blm" FEE="$FEE" FEE_RECIPIENT="$FEE_RECIPIENT" \
       forge script script/RedeployIris.s.sol $(rpcArgs)
-    ;;
-  "Deploy periphery"*)
-    # Permissionless: no Iris owner op. The script reads config itself and self-heals a stale adapter
-    # binding after an Iris redeploy.
-    forge script script/DeployPeriphery.s.sol $(rpcArgs)
     ;;
   "Add / upgrade venue")
     VENUE=$(jq -r '.venues | keys_unsorted[]' "config/$CHAIN.json" | gum choose --header "Venue (label -> id)")
