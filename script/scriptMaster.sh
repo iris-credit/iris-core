@@ -43,6 +43,7 @@ forge build
 ACTION=$(gum choose \
   "Deploy (Pod, Iris, adapters, BLMs)" \
   "Redeploy Iris (one-shot venue/market/LLTV/BLM/fee setup)" \
+  "Deploy periphery (Bundler3 + adapter)" \
   "Add / upgrade venue" \
   "Enable market" \
   "Enable bond LLTV" \
@@ -55,6 +56,12 @@ ACTION=$(gum choose \
 
 # Every owner op lives in SetConfig.s.sol, selected by --sig.
 case "$ACTION" in
+  # Before the "Deploy"* arm, which would otherwise swallow this prefix.
+  "Deploy periphery"*)
+    # Permissionless: no Iris owner op. The script reads config itself and self-heals a stale adapter
+    # binding after an Iris redeploy.
+    forge script script/DeployPeriphery.s.sol $(rpcArgs)
+    ;;
   "Deploy"*)
     forge script script/Deploy.s.sol $(rpcArgs)
     ;;
