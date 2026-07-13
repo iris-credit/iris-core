@@ -79,6 +79,39 @@ contract IrisAdapterForkTest is PeripheryForkTest {
         assertEq(ERC20(wEth).balanceOf(address(generalAdapter1)), 0, "collateral.balanceOf(adapter)");
     }
 
+    function testTakeWithSolverPermit2(uint256 collateral, uint256 debt) public {
+        Quote memory quote = _buildAaveV3Quote(collateral, debt);
+        bytes memory signature = _signQuote(solverPk, quote);
+
+        // The solver only holds the universal Permit2 approval; the bond allowance for Iris is granted
+        // by a signature submitted inside the bundle, as a direct call to canonical Permit2.
+        deal(usdc, solver, quote.bond);
+        vm.prank(solver);
+        usdc.safeApprove(PermitUtils.PERMIT2, type(uint256).max);
+
+        deal(wEth, borrower, quote.collateral);
+        vm.prank(borrower);
+        wEth.safeApprove(address(generalAdapter1), quote.collateral);
+
+        address pod = vm.computeCreateAddress(address(iris), vm.getNonce(address(iris)));
+
+        bundle.push(_approve2(solverPk, usdc, quote.bond, 0, address(iris), false));
+        bundle.push(_irisSetAuthorizationWithSig(borrowerPk, true, 0, false));
+        bundle.push(_erc20TransferFrom(wEth, quote.collateral));
+        bundle.push(_irisTake(quote, signature));
+
+        vm.prank(borrower);
+        bundler3.multicall(bundle);
+
+        assertEq(iris.getLoan(pod).borrower, borrower, "loan.borrower");
+        assertEq(iris.getPosition(pod).bond, quote.bond, "position.bond");
+        assertEq(ERC20(usdc).balanceOf(solver), 0, "debt.balanceOf(solver)");
+        // The bond flowed through Permit2: no direct allowance existed and the in-bundle one is consumed.
+        assertEq(ERC20(usdc).allowance(solver, address(iris)), 0, "direct allowance");
+        (uint160 permit2Allowance,,) = IPermit2(PermitUtils.PERMIT2).allowance(solver, usdc, address(iris));
+        assertEq(permit2Allowance, 0, "permit2 allowance");
+    }
+
     /* REPAY */
 
     function testRepay(uint256 collateral, uint256 debt) public {

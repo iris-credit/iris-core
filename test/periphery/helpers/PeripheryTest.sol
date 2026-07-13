@@ -189,13 +189,25 @@ abstract contract PeripheryTest is BaseTest {
         view
         returns (Call memory)
     {
+        return _approve2(privateKey, token, amount, nonce, address(generalAdapter1), skipRevert);
+    }
+
+    /// @dev Grants a canonical Permit2 allowance to `spender` by signature.
+    function _approve2(
+        uint256 privateKey,
+        address token,
+        uint256 amount,
+        uint256 nonce,
+        address spender,
+        bool skipRevert
+    ) internal view returns (Call memory) {
         address user = vm.addr(privateKey);
 
         PermitSingle memory permitSingle = PermitSingle({
             details: PermitDetails({
                 token: token, amount: uint160(amount), expiration: uint48(SIGNATURE_DEADLINE), nonce: uint48(nonce)
             }),
-            spender: address(generalAdapter1),
+            spender: spender,
             sigDeadline: SIGNATURE_DEADLINE
         });
 
@@ -205,7 +217,7 @@ abstract contract PeripheryTest is BaseTest {
             uint160(amount),
             uint48(SIGNATURE_DEADLINE),
             uint48(nonce),
-            address(generalAdapter1),
+            spender,
             SIGNATURE_DEADLINE
         );
 
