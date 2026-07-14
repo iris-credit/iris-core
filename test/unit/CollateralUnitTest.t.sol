@@ -104,7 +104,8 @@ contract CollateralUnitTest is UnitTest {
         (,, uint256 fixedLeg,,) = iris.accrueLegsView(pod);
         uint256 timeToLiquidation = (maturity + overduePeriod).zeroFloorSub(block.timestamp);
         uint256 residual = debt.mulDivDown(
-            timeToLiquidation * fixedRate * BP + uint256(overduePeriod) * overdueRate * BP, SECONDS_PER_YEAR * WAD
+            timeToLiquidation * fixedRate * BP + MathLib.min(timeToLiquidation, overduePeriod) * overdueRate * BP,
+            SECONDS_PER_YEAR * WAD
         );
 
         if (debt + fixedLeg + residual > _maxDebt(collateral - amount, "")) {

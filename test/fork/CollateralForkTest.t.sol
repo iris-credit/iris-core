@@ -80,7 +80,8 @@ contract CollateralForkTest is ForkTest {
         uint256 timeToLiquidation = uint256(loan.maturity + loan.overduePeriod).zeroFloorSub(block.timestamp);
         uint256 residual = pos.debt
             .mulDivDown(
-                timeToLiquidation * loan.fixedRate * BP + uint256(loan.overduePeriod) * loan.overdueRate * BP,
+                timeToLiquidation * loan.fixedRate * BP + MathLib.min(timeToLiquidation, loan.overduePeriod)
+                    * loan.overdueRate * BP,
                 SECONDS_PER_YEAR * WAD
             );
         uint256 minCollateral =
