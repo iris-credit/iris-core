@@ -113,6 +113,8 @@ import {IVenueAdapter} from "./interfaces/IVenueAdapter.sol";
 /// @dev If rebase detects bad debt, bondRequirement is set to zero. In that state,
 /// the solver can withdraw bond even when net is negative but does not receive
 /// surplus or fixed interest because the loan is not expected to be repaid.
+/// @dev If a bad-debt loan is nonetheless closed via repay or liquidate, legs settle normally and the
+/// solver receives net and surplus, since the closer repays the debt and fixed interest in full.
 ///
 /// POD
 /// @dev No receive / fallback in pod. Rewards that are coming to pod will be handled offchain
