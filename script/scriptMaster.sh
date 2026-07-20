@@ -25,10 +25,10 @@ cleanup() {
 trap cleanup EXIT
 
 # Each environment broadcasts to its own chain id, so every fork keeps an isolated deployment book:
-# anvil -> deployments/31337.json, tenderly vnet -> deployments/9991.json, production -> deployments/1.json.
+# anvil -> deployments/31337.json, vnet -> deployments/9991.json, production -> deployments/1.json.
 ENV_CHOICE=$(gum choose --header "Environment" \
   "Local anvil (chain 31337)" \
-  "Tenderly vnet (chain 9991)" \
+  "VNet (chain 9991)" \
   "Production (Ethereum mainnet)")
 
 case "$ENV_CHOICE" in
@@ -39,18 +39,18 @@ case "$ENV_CHOICE" in
     PRIVATE_KEY="$ANVIL_PK" # funded anvil account; staging never uses the production key or a Ledger
     USE_LEDGER="false"
     ;;
-  "Tenderly"*)
-    ENVIRONMENT="tenderly"
-    [[ -n "${TENDERLY_RPC_URL:-}" ]] || { error "TENDERLY_RPC_URL not set in .env"; exit 1; }
+  "VNet"*)
+    ENVIRONMENT="vnet"
+    [[ -n "${VNET_RPC_URL:-}" ]] || { error "VNET_RPC_URL not set in .env"; exit 1; }
     # Probe the endpoint before broadcasting (mirrors runAnvil): _chain() also accepts chain-id 1,
-    # so a mis-set TENDERLY_RPC_URL pointing at mainnet would broadcast real transactions with the
+    # so a mis-set VNET_RPC_URL pointing at mainnet would broadcast real transactions with the
     # deployer key without ever hitting the production confirm.
-    chainId="$(cast chain-id --rpc-url "$TENDERLY_RPC_URL" 2>/dev/null || true)"
-    [[ -n "$chainId" ]] || { error "cannot reach TENDERLY_RPC_URL (cast chain-id failed)"; exit 1; }
-    [[ "$chainId" == "9991" ]] || { error "TENDERLY_RPC_URL serves chain-id $chainId (expected vnet 9991)"; exit 1; }
-    # Persistent mainnet fork, signed with the real deployer key. Delete deployments/9991.json when
-    # the vnet is recreated, since a fresh vnet has none of the book's contracts.
-    info "tenderly vnet: broadcasting to virtual_ethereum"
+    chainId="$(cast chain-id --rpc-url "$VNET_RPC_URL" 2>/dev/null || true)"
+    [[ -n "$chainId" ]] || { error "cannot reach VNET_RPC_URL (cast chain-id failed)"; exit 1; }
+    [[ "$chainId" == "9991" ]] || { error "VNET_RPC_URL serves chain-id $chainId (expected vnet 9991)"; exit 1; }
+    # Persistent anvil mainnet fork, signed with the real deployer key. Its book mirrors
+    # deployments/1.json, and a recreated fork re-inherits mainnet state, so the book stays valid.
+    info "vnet: broadcasting to the vnet rpc endpoint"
     ;;
   "Production"*)
     ENVIRONMENT="production"
