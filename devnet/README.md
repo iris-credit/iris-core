@@ -4,8 +4,8 @@ Shared staging network: a long-lived anvil fork of Ethereum mainnet, consumed as
 a plain RPC URL by iris-rfq, iris-indexer, and iris-ui.
 
 Because it forks mainnet, the already-deployed Iris contracts (plus Aave, Morpho,
-and every token in `CHAIN_ADDRESSES[1]`) exist on it from the first block — there
-is no deploy step. To test unreleased contract code, run a `forge script` from
+and every token in `CHAIN_ADDRESSES[ChainId.TenderlyVNet]`, which mirrors mainnet)
+exist on it from the first block — there is no deploy step. To test unreleased contract code, run a `forge script` from
 this repo against the fork's URL like any other network.
 
 ## Railway setup (one-time)
@@ -17,15 +17,17 @@ this repo against the fork's URL like any other network.
 3. Environment variables:
    - `FORK_URL` (required): archive-capable mainnet RPC, e.g. a free Alchemy key.
    - `FORK_BLOCK_NUMBER` (optional): pin the fork base block for determinism.
-     Unset = fork at whatever the head block is when the service boots.
+     Unset = fork at whatever the head block is when the service boots. If set, it
+     must be ≥ `25_572_166` (the Jul 20 redeploy) so the current contracts exist.
 4. Expose the service publicly for the UI and solvers; the indexer should use the
    Railway-internal hostname instead.
 
 ## Consumers
 
 Point `RPC_URL` (rfq CDK env), the indexer's ponder RPC env, and the UI's network
-config at the service URL. Chain id is 1 on purpose: the SDK's addresses and
-signature domains work unchanged.
+config at the service URL. Chain id is 9991 — the SDK's `ChainId.TenderlyVNet` — so
+`CHAIN_ADDRESSES` resolve unchanged while devnet transactions and EIP-712 signatures
+are invalid on mainnet and vice versa: nothing signed here can be replayed there.
 
 ## Rules of the road
 
