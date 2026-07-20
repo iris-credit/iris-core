@@ -14,4 +14,5 @@ exec anvil \
   ${FORK_BLOCK_NUMBER:+--fork-block-number "$FORK_BLOCK_NUMBER"} \
   --state /data/state.json \
   --state-interval 60 \
+  --prune-history \
   --auto-impersonate
