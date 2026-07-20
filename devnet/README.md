@@ -48,11 +48,15 @@ are invalid on mainnet and vice versa: nothing signed here can be replayed there
   hostname is public knowledge (Cloudflare's cert put it in CT logs), gated only by
   the rate limit. Assume strangers can read and mutate staging state; never sign
   with a real key. If unexplained state changes start happening, the planned fix is
-  a Cloudflare Worker method filter (public: `eth_*` reads + `eth_sendRawTransaction`;
-  cheatcodes behind a token path).
+  a Cloudflare Worker method filter: the public allowlist enumerates specific
+  read-only methods plus `eth_sendRawTransaction` — never the whole `eth_*` prefix,
+  because `eth_sendTransaction` under `--auto-impersonate` is an unauthenticated
+  arbitrary-sender write — with cheatcodes behind a token path.
 - The fork inherits mainnet state **as of its creation block**. Mainnet config done
   later (enable ops, BLM params, solver whitelisting) does not appear here — mirror
-  it via scriptMaster's VNet arm, or reset state to re-fork from head.
+  it via scriptMaster's VNet arm, or reset state to re-fork from head. Re-forking
+  from head only works with `FORK_BLOCK_NUMBER` unset; a pinned deployment restarts
+  on the same old snapshot, so clear or raise the pin first.
 - Test balances come from RPC calls against this endpoint (the UI's dev faucet
   button, `cast rpc anvil_setBalance …`); there is no faucet service. For ERC20s,
   impersonate a whale and `transfer` — the path that also works for stETH.
