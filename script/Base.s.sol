@@ -25,7 +25,7 @@ abstract contract BaseScript is Script {
     }
 
     function _chain() internal view returns (string memory) {
-        // 1 mainnet, 31337 anvil staging, 9991 tenderly vnet: all run against the ethereum config.
+        // 1 mainnet, 31337 anvil staging, 9991 vnet: all run against the ethereum config.
         if (block.chainid == 1 || block.chainid == 31337 || block.chainid == 9991) return "ethereum";
         revert(string.concat("no config for chainid ", vm.toString(block.chainid)));
     }

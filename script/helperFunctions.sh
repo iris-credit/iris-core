@@ -11,7 +11,7 @@ ANVIL_PK="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 
 # Translate the environment into forge flags. All modes broadcast; they differ only in the target:
 #   staging    -> local forked anvil (chain-id 31337)  -> deployments/31337.json
-#   tenderly   -> persistent vnet fork (chain-id 9991) -> deployments/9991.json
+#   vnet       -> persistent vnet fork (chain-id 9991) -> deployments/9991.json
 #   production -> the real chain ("ethereum" alias)    -> deployments/1.json
 # Keeping every fork on its own chain-id is what stops simulated addresses leaking into production's book.
 rpcArgs() {
@@ -19,8 +19,8 @@ rpcArgs() {
   if [[ "$ENVIRONMENT" == "production" ]]; then
     flags="--rpc-url ethereum --broadcast"
     [[ "${VERIFY:-false}" == "true" ]] && flags="$flags --verify"
-  elif [[ "$ENVIRONMENT" == "tenderly" ]]; then
-    flags="--rpc-url virtual_ethereum --broadcast"
+  elif [[ "$ENVIRONMENT" == "vnet" ]]; then
+    flags="--rpc-url vnet --broadcast"
   else
     flags="--rpc-url $ANVIL_RPC --broadcast"
   fi

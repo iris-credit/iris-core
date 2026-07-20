@@ -3,7 +3,7 @@ set -e
 
 : "${FORK_URL:?FORK_URL is required (archive-capable mainnet RPC, e.g. Alchemy)}"
 
-# Chain id 9991 (the SDK's ChainId.TenderlyVNet) so @iris-credit/core-sdk addresses
+# Chain id 9991 (the SDK's ChainId.VNet) so @iris-credit/core-sdk addresses
 # resolve unchanged while devnet transactions and EIP-712 signatures stay invalid on
 # mainnet — no cross-replay. Throwaway keys only — never a real key against this URL.
 exec anvil \
