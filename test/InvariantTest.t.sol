@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.0;
 
+import {IMorpho} from "@morpho-blue/interfaces/IMorpho.sol";
+
 import "./ForkTest.t.sol";
 
 abstract contract InvariantTest is ForkTest {
@@ -46,6 +48,20 @@ abstract contract InvariantTest is ForkTest {
                 MorphoBlueUtils.idToMarketParams(morphoBlue, config.morphoMarketIdList[i]);
             deal(marketParams.loanToken, address(this), amount);
             MorphoBlueUtils.supply(morphoBlue, marketParams, amount, address(this));
+        }
+    }
+
+    /// @dev Realize Morpho interest on every time jump. The adapter derives the Morpho debt index by
+    /// extrapolating stale market totals through the Adaptive Curve IRM's average-rate approximation,
+    /// which is only quasi-monotonic in the extrapolation window: over a long warp with no market write
+    /// (impossible on live markets, which are touched continuously) the derived index can dip below a
+    /// pod's stored snapshot and revert accrual. Writing the market at each warp keeps every index the
+    /// suite reads a realized, monotone value.
+    function _forward(uint256 blocks) internal override {
+        super._forward(blocks);
+        for (uint256 i; i < config.morphoMarketIdList.length; ++i) {
+            IMorpho(morphoBlue)
+                .accrueInterest(MorphoBlueUtils.idToMarketParams(morphoBlue, config.morphoMarketIdList[i]));
         }
     }
 

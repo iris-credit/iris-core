@@ -73,7 +73,7 @@ abstract contract BaseTest is Test {
     }
 
     /// @dev Rolls & warps the given number of blocks forward the blockchain.
-    function _forward(uint256 blocks) internal {
+    function _forward(uint256 blocks) internal virtual {
         vm.roll(block.number + blocks);
         vm.warp(block.timestamp + blocks * BLOCK_TIME); // Block speed should depend on test network.
     }

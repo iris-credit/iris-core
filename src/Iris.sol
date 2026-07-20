@@ -131,7 +131,9 @@ import {IVenueAdapter} from "./interfaces/IVenueAdapter.sol";
 /// With a 1e27 base index, the cap is ~3.4e11x accumulated borrow-index growth.
 /// @dev Invariant `index >= lastIndex`: borrow interest only raises the venue debt index. A bad-debt
 /// liquidation lowers it by at most a `toAssetsUp` rounding (<=1 unit) that interest covers within a
-/// block. Hence the unchecked index deltas never underflow.
+/// block. The IRM's approximate average rate can also dip the index on a long-unwritten, near-idle
+/// market. Whitelisting only blue-chip markets excludes that state. Hence the unchecked index deltas
+/// never underflow.
 ///
 /// TOKEN REQUIREMENTS
 /// @dev List of assumptions on the token that guarantees that the token behaves as expected:
