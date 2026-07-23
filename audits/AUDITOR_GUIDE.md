@@ -9,7 +9,8 @@ organized to answer.
 
 ## Scope
 
-In scope: everything under [`src/`](../src/) except [`src/libraries/`](../src/libraries/).
+In scope: everything under [`src/`](../src/) except [`src/libraries/`](../src/libraries/) and
+[`src/periphery/`](../src/periphery/).
 
 - [`Iris.sol`](../src/Iris.sol) - the core accountant and fund custodian (primary target).
 - [`Pod.sol`](../src/Pod.sol) - the per-loan clone holding venue positions.
@@ -17,7 +18,8 @@ In scope: everything under [`src/`](../src/) except [`src/libraries/`](../src/li
 - [`blm/`](../src/blm/) - bond lock modules.
 - [`interfaces/`](../src/interfaces/) - interfaces and the shared `Loan` / `Position` / `Quote` structs.
 
-Out of scope: [`src/libraries/`](../src/libraries/) (`ConstantsLib`, `MathLib`, `EventsLib`).
+Out of scope: [`src/libraries/`](../src/libraries/) (`ConstantsLib`, `MathLib`, `EventsLib`) and
+[`src/periphery/`](../src/periphery/) (the vendored Bundler3 fork and its adapters).
 
 ## Critical area: the venue boundary and rebase
 
