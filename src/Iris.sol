@@ -440,7 +440,7 @@ contract Iris is IIris {
         _settleLegs(loan, pos);
 
         address adapter = venueAdapter[pos.venueId];
-        uint256 negativeNet = pos.floatingLeg > pos.fixedLeg ? pos.floatingLeg - pos.fixedLeg : 0;
+        uint256 negativeNet = pos.floatingLeg.zeroFloorSub(pos.fixedLeg);
         uint256 bondSlashed = MathLib.min(negativeNet, pos.bond);
         uint256 badBond = negativeNet.zeroFloorSub(pos.bond);
         uint256 repaid = pos.debt + pos.fixedLeg + badBond;
@@ -490,7 +490,7 @@ contract Iris is IIris {
         _settleLegs(loan, pos);
 
         address adapter = venueAdapter[pos.venueId];
-        uint256 negativeNet = pos.floatingLeg > pos.fixedLeg ? pos.floatingLeg - pos.fixedLeg : 0;
+        uint256 negativeNet = pos.floatingLeg.zeroFloorSub(pos.fixedLeg);
         uint256 bondSlashed = MathLib.min(negativeNet, pos.bond);
         uint256 badBond = negativeNet.zeroFloorSub(pos.bond);
         uint256 repaid = pos.debt + pos.fixedLeg + badBond;
@@ -885,7 +885,7 @@ contract Iris is IIris {
             pos.fixedLeg += residual.toUint128();
         }
 
-        uint256 net = pos.fixedLeg > pos.floatingLeg ? pos.fixedLeg - pos.floatingLeg : 0;
+        uint256 net = pos.fixedLeg.zeroFloorSub(pos.floatingLeg);
         uint256 _fee = loan.fee * BP;
         uint256 performanceFee = net != 0 && _fee != 0 ? net.mulDivDown(_fee, WAD) : 0;
         uint256 surplusFee = _fee != 0 ? pos.surplus.mulDivDown(_fee, WAD) : 0;
