@@ -24,6 +24,10 @@ rpcArgs() {
   else
     flags="--rpc-url $ANVIL_RPC --broadcast"
   fi
+  # --slow sends one tx at a time and waits for its receipt. Without it forge dispatches the whole
+  # batch concurrently and the node may assign sender nonces in arrival order, so the CREATE addresses
+  # recorded by save() (derived from the simulated nonces) name the wrong contracts.
+  flags="$flags --slow"
   if [[ "${USE_LEDGER:-false}" == "true" ]]; then
     flags="$flags --ledger --sender ${ETH_FROM:-}"
   else
