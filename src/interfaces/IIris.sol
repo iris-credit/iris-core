@@ -77,6 +77,7 @@ interface IIris {
     error InvalidDuration();
     error InvalidNonce();
     error InvalidSignature();
+    error LiquidatableLoan();
     error LoanNotCreated();
     error LoanNotResolved();
     error NotAllowedVenue();

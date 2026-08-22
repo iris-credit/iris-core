@@ -228,6 +228,6 @@ library StorageUtils {
     function _writePacked(address iris, bytes32 slot, uint256 bitOffset, uint256 bitWidth, uint256 value) private {
         bytes32 current = vm.load(iris, slot);
         uint256 mask = ((uint256(1) << bitWidth) - 1) << bitOffset;
-        vm.store(iris, slot, bytes32((uint256(current) & ~mask) | (value << bitOffset)));
+        vm.store(iris, slot, bytes32((uint256(current) & ~mask) | ((value << bitOffset) & mask)));
     }
 }
