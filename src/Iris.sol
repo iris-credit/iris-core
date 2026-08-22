@@ -85,6 +85,9 @@ import {IVenueAdapter} from "./interfaces/IVenueAdapter.sol";
 ///
 /// REFINANCE
 /// @dev It's only possible to refinance to whitelisted markets (enabled data).
+/// @dev The borrower does not constrain which enabled market a refinance selects, so any enabled data
+/// matching the loan's tokens can be bound to any loan on that venue. enableData must therefore only admit
+/// markets whose oracle and lltv are acceptable for every loan that can reach them.
 /// @dev The CEI pattern is not enforced given the token (non-reentrant), venue and its adapter is trusted.
 /// @dev Refinance may introduce venue rounding dust: collateral can round down and debt can round up.
 /// Repeated invocations can slightly worsen the position, but this is economically infeasible due to gas cost.
@@ -706,7 +709,7 @@ contract Iris is IIris {
         require(receiver != address(0), ZeroAddress());
         require(pos.lastUpdate != 0, LoanNotCreated());
         require(pos.bondRequirement != 0, ZeroAmount());
-        require(block.timestamp <= loan.maturity + loan.overduePeriod, Unrefinanceable());
+        require(block.timestamp <= loan.maturity + loan.overduePeriod, LiquidatableLoan());
         require(_isSenderAuthorized(loan.solver), Unauthorized());
         require(newAdapter != address(0), AdapterNotSet());
         require((loan.venueBitmap >> newVenueId) & 1 == 1, NotAllowedVenue());

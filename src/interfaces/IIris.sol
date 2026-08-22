@@ -77,6 +77,7 @@ interface IIris {
     error InvalidDuration();
     error InvalidNonce();
     error InvalidSignature();
+    error LiquidatableLoan();
     error LoanNotCreated();
     error LoanNotResolved();
     error NotAllowedVenue();
@@ -86,7 +87,6 @@ interface IIris {
     error QuoteExpired();
     error SignatureExpired();
     error Unauthorized();
-    error Unrefinanceable();
     error VenueIdTooHigh();
     error ZeroAddress();
     error ZeroAmount();
