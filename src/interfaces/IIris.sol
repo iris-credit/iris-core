@@ -86,6 +86,7 @@ interface IIris {
     error QuoteExpired();
     error SignatureExpired();
     error Unauthorized();
+    error Unrefinanceable();
     error VenueIdTooHigh();
     error ZeroAddress();
     error ZeroAmount();

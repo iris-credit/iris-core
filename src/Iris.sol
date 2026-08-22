@@ -90,6 +90,8 @@ import {IVenueAdapter} from "./interfaces/IVenueAdapter.sol";
 /// Repeated invocations can slightly worsen the position, but this is economically infeasible due to gas cost.
 /// @dev One-sided collateral or debt changes directly on the venue before refinance
 /// are not reconciled and remain governed by the external venue change assumptions.
+/// @dev Refinance does not health-check the new market, so a solver can move the loan to a market whose
+/// lltv or price leaves it immediately liquidatable on the underlying venue.
 ///
 /// REBASE
 /// @dev Rebase acts only when both venue collateral and venue debt have fallen below their expected values
@@ -104,10 +106,13 @@ import {IVenueAdapter} from "./interfaces/IVenueAdapter.sol";
 /// value of collateral lost since the last sync. A standard venue liquidation removes collateral
 /// worth the repaid debt plus liquidation bonus while reducing venue debt only by the repaid debt,
 /// so the liquidation-bonus buffer is the headroom for borrower direct venue repayment to be
-/// recognized by rebase. Extra one-sided venue repayment is outside rebase and may be treated as donation.
+/// recognized by rebase. Extra one-sided venue repayment is outside rebase.
 /// @dev Rebase prices the lost collateral at the adapter's current oracle price, not at the price used
 /// by the venue liquidation. Large price moves between the venue liquidation and the rebase call can
 /// change how much debt reduction is recognized and whether bad debt is detected.
+/// @dev Debt that rebase does not recognize, from either cause above, leaves the stored debt above the real
+/// venue debt. At close the closer repays the stored amount while only the venue debt is forwarded to the
+/// venue, so the difference stays in Iris with no owner and counts as a donation.
 /// @dev Surplus can be greater than the venue collateral in an extreme case where most of the collateral got
 /// liquidated in the underlying venue. In such a case, the surplus shrinks to venue collateral.
 /// @dev If rebase detects bad debt, bondRequirement is set to zero. In that state,
@@ -701,6 +706,7 @@ contract Iris is IIris {
         require(receiver != address(0), ZeroAddress());
         require(pos.lastUpdate != 0, LoanNotCreated());
         require(pos.bondRequirement != 0, ZeroAmount());
+        require(block.timestamp <= loan.maturity + loan.overduePeriod, Unrefinanceable());
         require(_isSenderAuthorized(loan.solver), Unauthorized());
         require(newAdapter != address(0), AdapterNotSet());
         require((loan.venueBitmap >> newVenueId) & 1 == 1, NotAllowedVenue());
