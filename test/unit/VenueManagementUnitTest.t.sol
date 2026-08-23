@@ -35,6 +35,12 @@ contract VenueManagementUnitTest is UnitTest {
 
         StorageUtils.setPositionBondRequirement(address(iris), pod, 1);
 
+        // Liquidatable loan
+        vm.expectRevert(IIris.LiquidatableLoan.selector);
+        iris.refinance(pod, receiver, newVenueId, newData);
+
+        StorageUtils.setLoanMaturity(address(iris), pod, uint32(block.timestamp + 1 days));
+
         // Unauthorized
         StorageUtils.setLoanSolver(address(iris), pod, solver);
         vm.expectRevert(IIris.Unauthorized.selector);

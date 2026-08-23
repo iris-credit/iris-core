@@ -261,6 +261,8 @@ contract IrisInvariantTest is InvariantTest {
         Loan memory loan = iris.getLoan(pod);
         Position memory pos = iris.getPosition(pod);
 
+        if (block.timestamp > loan.maturity + loan.overduePeriod) return;
+
         (uint256 newVenueId, bytes memory data) = _refinanceTarget(pod);
 
         (uint256 venueCollateral, uint256 venueDebt) = IVenueAdapter(iris.venueAdapter(pos.venueId))
