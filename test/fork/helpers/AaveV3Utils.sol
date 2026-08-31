@@ -258,15 +258,15 @@ library AaveV3Utils {
         (uint256 liquidityRate,) = IReserveInterestRateStrategy(reserveData.interestRateStrategyAddress)
             .calculateInterestRates(
                 DataTypes.CalculateInterestRatesParams({
-                unbacked: 0,
-                liquidityAdded: amount,
-                liquidityTaken: 0,
-                totalDebt: totalDebt,
-                reserveFactor: reserveData.configuration.getReserveFactor(),
-                reserve: token,
-                usingVirtualBalance: true,
-                virtualUnderlyingBalance: aavePool.getVirtualUnderlyingBalance(token)
-            })
+                    unbacked: 0,
+                    liquidityAdded: amount,
+                    liquidityTaken: 0,
+                    totalDebt: totalDebt,
+                    reserveFactor: reserveData.configuration.getReserveFactor(),
+                    reserve: token,
+                    usingVirtualBalance: true,
+                    virtualUnderlyingBalance: aavePool.getVirtualUnderlyingBalance(token)
+                })
             );
         uint256 factor = WadRayMath.RAY + (liquidityRate * elapsed) / SECONDS_PER_YEAR;
 
@@ -292,15 +292,15 @@ library AaveV3Utils {
         (, uint256 variableBorrowRate) = IReserveInterestRateStrategy(reserveData.interestRateStrategyAddress)
             .calculateInterestRates(
                 DataTypes.CalculateInterestRatesParams({
-                unbacked: 0,
-                liquidityAdded: 0,
-                liquidityTaken: amount,
-                totalDebt: totalDebt,
-                reserveFactor: reserveData.configuration.getReserveFactor(),
-                reserve: token,
-                usingVirtualBalance: true,
-                virtualUnderlyingBalance: aavePool.getVirtualUnderlyingBalance(token)
-            })
+                    unbacked: 0,
+                    liquidityAdded: 0,
+                    liquidityTaken: amount,
+                    totalDebt: totalDebt,
+                    reserveFactor: reserveData.configuration.getReserveFactor(),
+                    reserve: token,
+                    usingVirtualBalance: true,
+                    virtualUnderlyingBalance: aavePool.getVirtualUnderlyingBalance(token)
+                })
             );
 
         return MathUtils.calculateCompoundedInterest(variableBorrowRate, 0, elapsed).rayToWad();
