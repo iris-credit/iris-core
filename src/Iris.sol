@@ -102,10 +102,9 @@ import {IVenueAdapter} from "./interfaces/IVenueAdapter.sol";
 /// collateral supply or debt repay on a pod) are out of scope and may be treated as unrecoverable donations.
 /// @dev Order is accrue, then rebase, then settle. Settlement runs on post-rebase (real venue) amounts, so the
 /// solver's claimable for net and surplus can never exceed what the pod can actually withdraw.
-/// @dev Legs accrue on the last synced collateral and debt, so after a venue liquidation fixedLeg, surplus
-/// and floatingLeg all keep over-accruing until rebase runs. Which side gains depends on the variable rate:
-/// at a low rate the solver earns more fixed and surplus, at a high rate the borrower gains as the bigger
-/// floatingLeg makes the bond liquidatable sooner.
+/// @dev Legs accrue on the last synced collateral and debt, so after a venue liquidation they keep accruing
+/// on stale bases until rebase runs. The longer the delay, the further settlement drifts between borrower
+/// and solver, in either direction.
 /// @dev A direct collateral supply to a pod's venue position (by anyone) raises venueCollateral, which can zero
 /// the liquidated term and make rebase skip even when a venue liquidation occurred. The donated collateral is
 /// recoverable by the borrower via escape.
