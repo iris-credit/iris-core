@@ -76,8 +76,8 @@ contract TakeForkTest is ForkTest {
 
         assertTrue(pod1 != pod2);
         assertTrue(quote1.nonce != quote2.nonce);
-        assertTrue(iris.isNonceUsed(quote1.solver, quote1.nonce));
-        assertTrue(iris.isNonceUsed(quote2.solver, quote2.nonce));
+        assertTrue(iris.isQuoteNonceUsed(quote1.solver, quote1.nonce));
+        assertTrue(iris.isQuoteNonceUsed(quote2.solver, quote2.nonce));
 
         Loan memory loan1 = iris.getLoan(pod1);
         Loan memory loan2 = iris.getLoan(pod2);
@@ -243,7 +243,7 @@ contract TakeForkTest is ForkTest {
 
         assertEq(ERC20(quote.collateralToken).allowance(quote.borrower, address(iris)), quote.collateral);
         assertEq(ERC20(quote.debtToken).allowance(quote.solver, address(iris)), quote.bond);
-        assertFalse(iris.isNonceUsed(quote.solver, quote.nonce));
+        assertFalse(iris.isQuoteNonceUsed(quote.solver, quote.nonce));
         assertEq(vm.getNonce(address(iris)), irisNonceBefore);
         assertEq(expectedPod.code.length, 0);
         assertEq(debtToken.balanceOf(receiver), receiverDebtBefore);
@@ -267,7 +267,7 @@ contract TakeForkTest is ForkTest {
         vm.prank(unauthorizer);
         iris.take(quote, signature);
 
-        assertFalse(iris.isNonceUsed(quote.solver, quote.nonce));
+        assertFalse(iris.isQuoteNonceUsed(quote.solver, quote.nonce));
     }
 
     /* HELPERS */
@@ -333,7 +333,7 @@ contract TakeForkTest is ForkTest {
         internal
         view
     {
-        assertTrue(iris.isNonceUsed(quote.solver, quote.nonce));
+        assertTrue(iris.isQuoteNonceUsed(quote.solver, quote.nonce));
 
         Loan memory loan = iris.getLoan(pod);
         assertEq(loan.borrower, quote.borrower);

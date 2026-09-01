@@ -74,11 +74,11 @@ contract LoanUnitTest is UnitTest {
         quote.deadline = block.timestamp;
 
         // Invalid nonce
-        StorageUtils.setIsNonceUsed(address(iris), solver, quote.nonce, true);
+        StorageUtils.setIsQuoteNonceUsed(address(iris), solver, quote.nonce, true);
         vm.expectRevert(IIris.InvalidNonce.selector);
         vm.prank(borrower);
         iris.take(quote, signature);
-        StorageUtils.setIsNonceUsed(address(iris), solver, quote.nonce, false);
+        StorageUtils.setIsQuoteNonceUsed(address(iris), solver, quote.nonce, false);
 
         // Invalid signature
         bytes memory wrongSignature = _signQuote(borrowerPk, quote);
@@ -282,14 +282,14 @@ contract LoanUnitTest is UnitTest {
             )
         );
         vm.expectEmit();
-        emit EventsLib.SetNonce(borrower, solver, quote.nonce);
+        emit EventsLib.SetQuoteNonce(borrower, solver, quote.nonce);
         vm.expectEmit();
         emit EventsLib.Take(borrower, expectedPod, quote, DEFAULT_TEST_COLLATERAL_INDEX, DEFAULT_TEST_DEBT_INDEX);
         address newPod = iris.take(quote, signature);
         vm.stopPrank();
 
         assertEq(newPod, expectedPod);
-        assertTrue(iris.isNonceUsed(solver, quote.nonce));
+        assertTrue(iris.isQuoteNonceUsed(solver, quote.nonce));
 
         Loan memory loan = iris.getLoan(newPod);
         assertEq(loan.borrower, borrower);
@@ -352,7 +352,7 @@ contract LoanUnitTest is UnitTest {
         address newPod = iris.take(quote, signature);
 
         assertEq(newPod, expectedPod);
-        assertTrue(iris.isNonceUsed(solver, quote.nonce));
+        assertTrue(iris.isQuoteNonceUsed(solver, quote.nonce));
 
         Loan memory loan = iris.getLoan(newPod);
         assertEq(loan.borrower, borrower);
@@ -381,7 +381,7 @@ contract LoanUnitTest is UnitTest {
         vm.expectRevert(IIris.InvalidSignature.selector);
         vm.prank(borrower);
         iris.take(quote, wrongSignature);
-        assertFalse(iris.isNonceUsed(address(erc1271), quote.nonce));
+        assertFalse(iris.isQuoteNonceUsed(address(erc1271), quote.nonce));
 
         bytes memory signature = _signQuote(walletOwnerPk, quote);
         address expectedPod = vm.computeCreateAddress(address(iris), vm.getNonce(address(iris)));
@@ -399,7 +399,7 @@ contract LoanUnitTest is UnitTest {
         address newPod = iris.take(quote, signature);
 
         assertEq(newPod, expectedPod);
-        assertTrue(iris.isNonceUsed(address(erc1271), quote.nonce));
+        assertTrue(iris.isQuoteNonceUsed(address(erc1271), quote.nonce));
 
         Loan memory loan = iris.getLoan(newPod);
         assertEq(loan.borrower, borrower);

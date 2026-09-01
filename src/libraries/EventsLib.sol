@@ -15,6 +15,7 @@ library EventsLib {
     event EnableData(bytes32 data);
     // Authorization events
     event SetNonce(address indexed caller, address indexed authorizer, uint256 nonce);
+    event SetQuoteNonce(address indexed caller, address indexed solver, uint256 nonce);
     event SetAuthorization(address indexed caller, address indexed authorizer, address indexed authorized, bool isAuthorized);
     // Loan events
     event Take(address indexed caller, address indexed pod, Quote quote, uint256 collateralIndex, uint256 debtIndex);
