@@ -298,7 +298,8 @@ abstract contract InvariantTest is ForkTest {
 
         Loan memory loan = iris.getLoan(pod);
         IVenueAdapter adapter = IVenueAdapter(iris.venueAdapter(pos.venueId));
-        (,, uint256 fixedLeg,,) = iris.accrueLegsView(pod);
+        (,, uint256 fixedLeg, uint256 floatingLeg,) = iris.accrueLegsView(pod);
+        uint256 badBond = floatingLeg.zeroFloorSub(fixedLeg).zeroFloorSub(pos.bond);
 
         uint256 price = adapter.price(loan.collateralToken, loan.debtToken, pos.data);
         uint256 lltv = adapter.lltv(loan.collateralToken, loan.debtToken, pos.data);
@@ -310,7 +311,7 @@ abstract contract InvariantTest is ForkTest {
                 SECONDS_PER_YEAR * WAD
             );
         uint256 irisMin =
-            (uint256(pos.debt) + fixedLeg + residual).mulDivUp(WAD, lltv).mulDivUp(ORACLE_PRICE_SCALE, price);
+            (uint256(pos.debt) + fixedLeg + residual + badBond).mulDivUp(WAD, lltv).mulDivUp(ORACLE_PRICE_SCALE, price);
 
         (uint256 venueCollateral, uint256 venueDebt) =
             adapter.positionAssets(pod, loan.collateralToken, loan.debtToken, pos.data);

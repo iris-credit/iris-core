@@ -41,6 +41,42 @@ contract CollateralUnitTest is UnitTest {
         assertEq(pos.collateral, amount);
     }
 
+    function testWithdrawCollateralReservesBadBond() public {
+        uint256 collateral = 150e18;
+        uint256 debt = 100e18;
+        uint256 bond = 10e18;
+        uint256 floatingLeg = 18e18; // badBond = floatingLeg - fixedLeg - bond = 8e18
+
+        StorageUtils.setLoanCollateralToken(address(iris), pod, collateralToken);
+        StorageUtils.setLoanDebtToken(address(iris), pod, debtToken);
+        StorageUtils.setLoanBorrower(address(iris), pod, borrower);
+        StorageUtils.setLoanMaturity(address(iris), pod, uint32(block.timestamp + 30 days));
+        StorageUtils.setPositionCollateral(address(iris), pod, uint128(collateral));
+        StorageUtils.setPositionDebt(address(iris), pod, uint128(debt));
+        StorageUtils.setPositionBond(address(iris), pod, uint128(bond));
+        StorageUtils.setPositionFloatingLeg(address(iris), pod, uint128(floatingLeg));
+        StorageUtils.setPositionLastUpdate(address(iris), pod, uint32(block.timestamp));
+        StorageUtils.setPositionCollateralIndex(address(iris), pod, uint128(1e27));
+        StorageUtils.setPositionDebtIndex(address(iris), pod, uint128(1e27));
+        VenueAdapterMock(address(venueAdapter)).setPosition(collateral, debt);
+        VenueAdapterMock(address(venueAdapter)).setIndices(1e27, 1e27);
+
+        // Without the bad bond reserve, debt / lltv = 125e18 would allow withdrawing 25e18.
+        assertLe(debt, _maxDebt(collateral - 20e18, ""));
+        vm.expectRevert(IIris.InsufficientCollateral.selector);
+        vm.prank(borrower);
+        iris.withdrawCollateral(pod, 20e18, receiver);
+
+        // (debt + badBond) / lltv = 135e18 leaves 15e18 withdrawable.
+        vm.prank(borrower);
+        iris.withdrawCollateral(pod, 15e18, receiver);
+
+        Position memory pos = iris.getPosition(pod);
+        assertEq(pos.collateral, collateral - 15e18);
+        assertEq(pos.bond, bond);
+        assertEq(pos.floatingLeg, floatingLeg);
+    }
+
     function testWithdrawCollateral(
         uint256 collateral,
         uint256 debt,
