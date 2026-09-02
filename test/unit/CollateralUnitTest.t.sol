@@ -77,6 +77,49 @@ contract CollateralUnitTest is UnitTest {
         assertEq(pos.floatingLeg, floatingLeg);
     }
 
+    function testWithdrawCollateralReservesProjectedExposure() public {
+        uint256 collateral = 150e18;
+        uint256 debt = 100e18;
+        uint256 bond = 10e18;
+        uint256 floatingLeg = 18e18; // floatingLeg - bond = 8e18
+        uint256 fixedRate = 1000; // 10% in BP units
+        uint256 duration = 365 days;
+
+        StorageUtils.setLoanCollateralToken(address(iris), pod, collateralToken);
+        StorageUtils.setLoanDebtToken(address(iris), pod, debtToken);
+        StorageUtils.setLoanBorrower(address(iris), pod, borrower);
+        StorageUtils.setLoanMaturity(address(iris), pod, uint32(block.timestamp + duration));
+        StorageUtils.setLoanFixedRate(address(iris), pod, uint16(fixedRate));
+        StorageUtils.setPositionCollateral(address(iris), pod, uint128(collateral));
+        StorageUtils.setPositionDebt(address(iris), pod, uint128(debt));
+        StorageUtils.setPositionBond(address(iris), pod, uint128(bond));
+        StorageUtils.setPositionFloatingLeg(address(iris), pod, uint128(floatingLeg));
+        StorageUtils.setPositionLastUpdate(address(iris), pod, uint32(block.timestamp));
+        StorageUtils.setPositionCollateralIndex(address(iris), pod, uint128(1e27));
+        StorageUtils.setPositionDebtIndex(address(iris), pod, uint128(1e27));
+        VenueAdapterMock(address(venueAdapter)).setPosition(collateral, debt);
+        VenueAdapterMock(address(venueAdapter)).setIndices(1e27, 1e27);
+
+        // Fixed interest still to accrue through maturity exceeds the floating leg beyond the bond, so the
+        // reserve is the residual alone, not residual plus bad bond.
+        uint256 residual = debt.mulDivDown(duration * fixedRate * BP, SECONDS_PER_YEAR * WAD);
+        uint256 badBond = floatingLeg - bond;
+        assertGt(residual, badBond);
+        uint256 minCollateral = (debt + residual).mulDivUp(WAD, DEFAULT_TEST_LLTV);
+        uint256 summedMinCollateral = (debt + residual + badBond).mulDivUp(WAD, DEFAULT_TEST_LLTV);
+        uint256 amount = collateral - minCollateral;
+        assertGt(amount, collateral - summedMinCollateral);
+
+        vm.expectRevert(IIris.InsufficientCollateral.selector);
+        vm.prank(borrower);
+        iris.withdrawCollateral(pod, amount + 1e18, receiver);
+
+        vm.prank(borrower);
+        iris.withdrawCollateral(pod, amount, receiver);
+
+        assertEq(iris.getPosition(pod).collateral, minCollateral);
+    }
+
     function testWithdrawCollateral(
         uint256 collateral,
         uint256 debt,

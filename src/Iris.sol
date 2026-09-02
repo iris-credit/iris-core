@@ -593,9 +593,11 @@ contract Iris is IIris {
                     * loan.overdueRate * BP,
                 SECONDS_PER_YEAR * WAD
             );
-        uint256 badBond = pos.floatingLeg.zeroFloorSub(pos.fixedLeg).zeroFloorSub(pos.bond);
+        // Reserve the projected liquidation exposure: fixed interest through the liquidation window, or the
+        // floating leg beyond the bond if larger, since fixed interest accruing shrinks the bad bond one-for-one.
+        uint256 exposure = MathLib.max(pos.fixedLeg + residual, pos.floatingLeg.zeroFloorSub(pos.bond));
 
-        require(pos.debt + pos.fixedLeg + residual + badBond <= maxDebt, InsufficientCollateral());
+        require(pos.debt + exposure <= maxDebt, InsufficientCollateral());
 
         IPod(pod)
             .delegateCall(
