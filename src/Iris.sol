@@ -98,9 +98,11 @@ import {IVenueAdapter} from "./interfaces/IVenueAdapter.sol";
 ///
 /// REBASE
 /// @dev Rebase acts only when both venue collateral and venue debt have fallen below their expected values
-/// (collateral + surplus, debt + floatingLeg), that is, a venue liquidation. A direct collateral supply on a pod
-/// is tracked as the borrower's collateral at the next sync. A direct debt repay on a pod is out of scope and
-/// may be treated as an unrecoverable donation.
+/// (collateral + surplus, debt + floatingLeg), that is, a venue liquidation. A direct debt repay on a pod is out
+/// of scope and may be treated as an unrecoverable donation.
+/// @dev Live collateral above the tracked collateral and surplus is a direct venue supply. Rebase tracks it as
+/// the borrower's collateral, so a withdrawal backed by it cannot pull tracked principal out of the surplus
+/// base or the liquidation seize cap.
 /// @dev Order is accrue, then rebase, then settle. Settlement runs on post-rebase (real venue) amounts, so the
 /// solver's claimable for net and surplus can never exceed what the pod can actually withdraw.
 /// @dev Legs accrue on the last synced collateral and debt, so after a venue liquidation they keep accruing
@@ -824,8 +826,6 @@ contract Iris is IIris {
         uint256 repaid = (pos.debt + pos.floatingLeg).zeroFloorSub(venueDebt);
 
         if (liquidated == 0) {
-            // Live collateral above the books is a direct venue supply. Track it as the borrower's collateral so a
-            // withdrawal cannot use it to pull tracked principal out of the surplus base or the seize cap.
             pos.collateral = (venueCollateral - pos.surplus).toUint128();
             return;
         }
