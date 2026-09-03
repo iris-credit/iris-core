@@ -827,6 +827,7 @@ contract Iris is IIris {
 
         if (liquidated == 0) {
             pos.collateral = (venueCollateral - pos.surplus).toUint128();
+            emit EventsLib.Rebase(msg.sender, pod, pos.collateral, pos.debt, venueCollateral, venueDebt, 0);
             return;
         }
         if (repaid == 0) return;

@@ -84,6 +84,8 @@ contract CollateralUnitTest is UnitTest {
         VenueAdapterMock(address(venueAdapter)).setIndices(1e27, 1e27);
         VenueAdapterMock(address(venueAdapter)).setPosition(collateral + donated, debt);
 
+        vm.expectEmit();
+        emit EventsLib.Rebase(address(this), pod, collateral + donated, debt, collateral + donated, debt, 0);
         iris.rebase(pod);
 
         assertEq(iris.getPosition(pod).collateral, collateral + donated);
