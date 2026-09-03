@@ -202,7 +202,8 @@ contract Iris is IIris {
     mapping(uint256 lltv => bool) public isBondLltvEnabled;
     mapping(bytes32 data => bool) public isDataEnabled;
     mapping(address authorizer => mapping(address authorized => bool)) public isAuthorized;
-    mapping(address authorizer => mapping(uint256 nonce => bool)) public isNonceUsed;
+    mapping(address solver => mapping(uint256 nonce => bool)) public isQuoteNonceUsed;
+    mapping(address authorizer => uint256) public nonce;
     address public owner;
     address public feeRecipient;
     uint16 public fee;
@@ -302,7 +303,7 @@ contract Iris is IIris {
 
     function setAuthorizationWithSig(Authorization calldata authorization, bytes calldata signature) external {
         require(block.timestamp <= authorization.deadline, SignatureExpired());
-        require(!isNonceUsed[authorization.authorizer][authorization.nonce], InvalidNonce());
+        require(authorization.nonce == nonce[authorization.authorizer]++, InvalidNonce());
 
         bytes32 hashStruct = keccak256(abi.encode(AUTHORIZATION_TYPEHASH, authorization));
         bytes32 digest = keccak256(bytes.concat("\x19\x01", DOMAIN_SEPARATOR(), hashStruct));
@@ -313,7 +314,6 @@ contract Iris is IIris {
         );
 
         isAuthorized[authorization.authorizer][authorization.authorized] = authorization.isAuthorized;
-        isNonceUsed[authorization.authorizer][authorization.nonce] = true;
 
         emit EventsLib.SetNonce(msg.sender, authorization.authorizer, authorization.nonce);
         emit EventsLib.SetAuthorization(
@@ -335,7 +335,7 @@ contract Iris is IIris {
 
         require(_isSenderAuthorized(quote.borrower), Unauthorized());
         require(block.timestamp <= quote.deadline, QuoteExpired());
-        require(!isNonceUsed[quote.solver][quote.nonce], InvalidNonce());
+        require(!isQuoteNonceUsed[quote.solver][quote.nonce], InvalidNonce());
 
         bytes32 hashStruct = keccak256(
             abi.encode(
@@ -384,7 +384,7 @@ contract Iris is IIris {
         require(adapter != address(0), AdapterNotSet());
         require(isDataEnabled[keccak256(quote.data)], InvalidData());
 
-        isNonceUsed[quote.solver][quote.nonce] = true;
+        isQuoteNonceUsed[quote.solver][quote.nonce] = true;
 
         loan.borrower = quote.borrower;
         loan.solver = quote.solver;
@@ -436,7 +436,7 @@ contract Iris is IIris {
                 )
             );
 
-        emit EventsLib.SetNonce(msg.sender, quote.solver, quote.nonce);
+        emit EventsLib.SetQuoteNonce(msg.sender, quote.solver, quote.nonce);
         emit EventsLib.Take(msg.sender, pod, quote, collateralIndex, debtIndex);
 
         return pod;
