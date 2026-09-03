@@ -75,8 +75,12 @@ contract RebaseForkTest is ForkTest {
 
         iris.rebase(pod);
 
+        // The direct supply is tracked as the borrower's collateral.
+        (uint256 venueCollateral,) =
+            IVenueAdapter(iris.venueAdapter(venueId)).positionAssets(pod, collateralToken, debtToken, data);
         Position memory newPos = iris.getPosition(pod);
-        assertEq(newPos.collateral, pos.collateral);
+        assertEq(newPos.collateral, venueCollateral - newPos.surplus);
+        assertGe(newPos.collateral, pos.collateral);
         assertEq(newPos.debt, pos.debt);
         assertEq(newPos.bondRequirement, pos.bondRequirement);
     }
@@ -372,8 +376,9 @@ contract RebaseForkTest is ForkTest {
 
         iris.rebase(pod);
 
+        // The direct supply is tracked as collateral; the one-sided debt reduction stays unreconciled.
         Position memory newPos = iris.getPosition(pod);
-        assertEq(newPos.collateral, pos.collateral);
+        assertEq(newPos.collateral, pos.collateral + supplied);
         assertEq(newPos.debt, pos.debt);
         assertEq(newPos.bondRequirement, pos.bondRequirement);
     }
