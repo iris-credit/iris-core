@@ -142,6 +142,9 @@ import {IVenueAdapter} from "./interfaces/IVenueAdapter.sol";
 /// block. The IRM's approximate average rate can also dip the index on a long-unwritten, near-idle
 /// market. Whitelisting only blue-chip markets excludes that state. Hence the unchecked index deltas
 /// never underflow.
+/// @dev An idle Aave reserve with a nonzero base rate keeps growing its reported index while the stored index
+/// does not move until the first borrow, so a take on it snapshots a higher index than the one the pod's debt
+/// is minted at. Do not use Aave debt assets that can reach that state.
 ///
 /// TOKEN REQUIREMENTS
 /// @dev List of assumptions on the token that guarantees that the token behaves as expected:
