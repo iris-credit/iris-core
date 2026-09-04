@@ -178,7 +178,7 @@ contract IrisAdapterForkTest is PeripheryForkTest {
         quote.debtToken.safeApprove(address(generalAdapter1), venueDebt);
 
         // The solver's nonce 0 was consumed by the quote.
-        bundle.push(_irisSetAuthorizationWithSig(solverPk, true, 1, false));
+        bundle.push(_irisSetAuthorizationWithSig(solverPk, true, 0, false));
         bundle.push(_erc20TransferFrom(quote.debtToken, venueDebt));
         bundle.push(_irisRefinance(pod, solver, uint256(VenueId.MORPHO_BLUE), morphoData));
 
@@ -202,7 +202,7 @@ contract IrisAdapterForkTest is PeripheryForkTest {
         callbackBundle.push(_irisRefinance(pod, address(generalAdapter1), uint256(VenueId.MORPHO_BLUE), morphoData));
 
         // The solver's nonce 0 was consumed by the quote.
-        bundle.push(_irisSetAuthorizationWithSig(solverPk, true, 1, false));
+        bundle.push(_irisSetAuthorizationWithSig(solverPk, true, 0, false));
         bundle.push(_morphoFlashLoan(quote.debtToken, venueDebt));
 
         vm.prank(solver);

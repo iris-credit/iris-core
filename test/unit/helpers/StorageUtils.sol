@@ -18,9 +18,10 @@ library StorageUtils {
     uint256 internal constant IS_BOND_LLTV_ENABLED_MAPPING_SLOT = 5;
     uint256 internal constant IS_DATA_ENABLED_MAPPING_SLOT = 6;
     uint256 internal constant IS_AUTHORIZED_MAPPING_SLOT = 7;
-    uint256 internal constant IS_NONCE_USED_MAPPING_SLOT = 8;
-    uint256 internal constant OWNER_SLOT = 9;
-    uint256 internal constant FEE_RECIPIENT_AND_FEE_SLOT = 10;
+    uint256 internal constant IS_QUOTE_NONCE_USED_MAPPING_SLOT = 8;
+    uint256 internal constant NONCE_MAPPING_SLOT = 9;
+    uint256 internal constant OWNER_SLOT = 10;
+    uint256 internal constant FEE_RECIPIENT_AND_FEE_SLOT = 11;
 
     /* BASE SLOTS FOR LOAN[pod] AND POSITION[pod] */
 
@@ -48,8 +49,8 @@ library StorageUtils {
 
     /* MAPPING SETTERS */
 
-    function setIsNonceUsed(address iris, address authorizer, uint256 nonce, bool value) internal {
-        bytes32 slot = keccak256(abi.encode(nonce, keccak256(abi.encode(authorizer, IS_NONCE_USED_MAPPING_SLOT))));
+    function setIsQuoteNonceUsed(address iris, address solver, uint256 nonce, bool value) internal {
+        bytes32 slot = keccak256(abi.encode(nonce, keccak256(abi.encode(solver, IS_QUOTE_NONCE_USED_MAPPING_SLOT))));
         vm.store(iris, slot, value ? bytes32(uint256(1)) : bytes32(0));
     }
 

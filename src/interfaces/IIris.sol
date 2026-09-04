@@ -106,7 +106,8 @@ interface IIris {
     function isBondLltvEnabled(uint256 lltv) external view returns (bool);
     function isDataEnabled(bytes32 data) external view returns (bool);
     function isAuthorized(address authorizer, address authorized) external view returns (bool);
-    function isNonceUsed(address authorizer, uint256 nonce) external view returns (bool);
+    function isQuoteNonceUsed(address solver, uint256 nonce) external view returns (bool);
+    function nonce(address authorizer) external view returns (uint256);
     function venueAdapter(uint256 venueId) external view returns (address);
 
     // Owner functions
