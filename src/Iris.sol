@@ -831,12 +831,13 @@ contract Iris is IIris {
         uint256 liquidated = (pos.collateral + pos.surplus).zeroFloorSub(venueCollateral);
         uint256 repaid = (pos.debt + pos.floatingLeg).zeroFloorSub(venueDebt);
 
-        if (liquidated == 0) {
-            pos.collateral = (venueCollateral - pos.surplus).toUint128();
-            emit EventsLib.Rebase(msg.sender, pod, pos.collateral, pos.debt, venueCollateral, venueDebt, 0);
+        if (liquidated == 0 || repaid == 0) {
+            if (venueCollateral > pos.collateral + pos.surplus) {
+                pos.collateral = (venueCollateral - pos.surplus).toUint128();
+                emit EventsLib.Rebase(msg.sender, pod, pos.collateral, pos.debt, venueCollateral, venueDebt, 0);
+            }
             return;
         }
-        if (repaid == 0) return;
 
         uint256 collateralPrice = IVenueAdapter(adapter).price(loan.collateralToken, loan.debtToken, pos.data);
         uint256 maxRepaid = liquidated.mulDivDown(collateralPrice, ORACLE_PRICE_SCALE);

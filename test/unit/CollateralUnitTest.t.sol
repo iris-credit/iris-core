@@ -90,6 +90,11 @@ contract CollateralUnitTest is UnitTest {
 
         assertEq(iris.getPosition(pod).collateral, collateral + donated);
         assertEq(iris.getPosition(pod).debt, debt);
+
+        // Synced already, so a rebase with nothing to track writes nothing and emits nothing.
+        vm.recordLogs();
+        iris.rebase(pod);
+        assertEq(vm.getRecordedLogs().length, 0);
     }
 
     function testWithdrawCollateralReservesBadBond() public {
