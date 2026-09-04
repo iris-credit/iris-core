@@ -45,7 +45,7 @@ contract RebaseForkTest is ForkTest {
         assertEq(newPos.bondRequirement, pos.bondRequirement);
     }
 
-    // External collateral supply is a donation. rebase no-ops.
+    // External collateral supply is synced into the borrower's collateral.
     // (venue collateral > position collateral + surplus)
     function testRebaseExternalSupplyCollateral(
         uint256 collateral,
@@ -345,7 +345,8 @@ contract RebaseForkTest is ForkTest {
         assertEq(newPos.bondRequirement, 0);
     }
 
-    // External supply collateral with venue debt reduction(external repay or liquidated). rebase no-ops.
+    // External supply collateral with venue debt reduction (external repay or liquidated). rebase syncs the
+    // supply and leaves the one-sided debt reduction unreconciled.
     function testRebaseExternalSupplyCollateralWithDebtReduction(
         uint256 collateral,
         uint256 debt,
