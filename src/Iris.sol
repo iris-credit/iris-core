@@ -72,9 +72,9 @@ import {IVenueAdapter} from "./interfaces/IVenueAdapter.sol";
 /// @dev After bond liquidation, the borrower's loan position sits on the underlying venue getting variable interest
 /// rate.
 /// @dev On bond liquidation the solver forfeits the surplus. It is not settled to the solver, and the
-/// underlying collateral with its yield stays in the venue for the borrower to reclaim via escape,
-/// compensating the borrower for being forced to variable rate.
-/// @dev Borrower can close the underlying venue position by executing escape function.
+/// underlying collateral with its yield stays in the venue for the borrower, compensating the borrower for
+/// being forced to variable rate. It stays tracked as the borrower's collateral, so the borrower can withdraw
+/// it with withdrawCollateral or close the venue position with escape.
 /// @dev On bond liquidation the bond covers two things: the settlement the solver owes (floatingLeg minus
 /// fixedLeg), which repays the venue, and the liquidator bonus (seized). Both come out of the bond, so the
 /// solver pays the incentive. The borrower bears bad bond only when settlement plus bonus exceeds the bond.
@@ -681,7 +681,6 @@ contract Iris is IIris {
         uint256 bondSlashed = MathLib.min(negativeNet + seized, pos.bond);
         uint256 repaid = MathLib.min(bondSlashed - seized, venueDebt);
 
-        pos.collateral = 0;
         pos.debt = 0;
         pos.bond -= bondSlashed.toUint128();
         pos.bondRequirement = 0;

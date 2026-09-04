@@ -152,13 +152,15 @@ contract BondUnitTest is UnitTest {
             vm.expectCall(debtToken, abi.encodeWithSelector(ERC20.transfer.selector, receiver, seized));
             vm.expectEmit();
             emit EventsLib.LiquidateBond(address(this), pod, receiver, seized);
+            uint256 collateralBefore = iris.getPosition(pod).collateral;
             uint256 returned = iris.liquidateBond(pod, receiver);
 
             Position memory pos = iris.getPosition(pod);
             assertEq(returned, seized);
             assertEq(pos.bond, bond - bondSlashed);
             assertEq(pos.bondRequirement, 0);
-            assertEq(pos.collateral, 0);
+            // Collateral stays tracked for the borrower to withdraw or escape.
+            assertEq(pos.collateral, collateralBefore);
             assertEq(pos.debt, 0);
             assertEq(pos.fixedLeg, 0);
             assertEq(pos.floatingLeg, 0);
