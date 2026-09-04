@@ -187,7 +187,12 @@ contract CollateralUnitTest is UnitTest {
             SECONDS_PER_YEAR * WAD
         );
 
-        if (debt + fixedLeg + residual > _maxDebt(collateral - amount, "")) {
+        if (block.timestamp > maturity + overduePeriod) {
+            // Liquidatable - no withdrawal against a pending liquidation
+            vm.expectRevert(IIris.LiquidatableLoan.selector);
+            vm.prank(borrower);
+            iris.withdrawCollateral(pod, amount, receiver);
+        } else if (debt + fixedLeg + residual > _maxDebt(collateral - amount, "")) {
             // Insufficient collateral - remaining collateral does not cover debt + fixed interest owed
             vm.expectRevert(IIris.InsufficientCollateral.selector);
             vm.prank(borrower);

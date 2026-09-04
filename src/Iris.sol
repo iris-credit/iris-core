@@ -34,6 +34,8 @@ import {IVenueAdapter} from "./interfaces/IVenueAdapter.sol";
 /// @dev Iris lets borrowers withdraw collateral up to the underlying venue's LLTV edge. It only checks that
 /// the remaining collateral covers the borrower's debt, fixed interest through maturity + overduePeriod, and
 /// any bad bond. Managing venue health is the borrower's responsibility.
+/// @dev Once the loan is liquidatable, withdrawCollateral reverts, so a borrower cannot withdraw against a
+/// pending liquidation.
 /// @dev The reserve is the projected liquidation exposure: fixed interest through the liquidation window, or
 /// the floating leg beyond the bond if that is larger. Fixed interest accruing shrinks the bad bond one-for-one,
 /// so the two are never summed.
@@ -580,6 +582,7 @@ contract Iris is IIris {
         require(receiver != address(0), ZeroAddress());
         require(loan.collateralToken != address(0), ZeroAddress());
         require(_isSenderAuthorized(loan.borrower), Unauthorized());
+        require(block.timestamp <= loan.maturity + loan.overduePeriod, LiquidatableLoan());
 
         _accrueLegs(loan, pos, pod);
         _rebase(loan, pos, pod);

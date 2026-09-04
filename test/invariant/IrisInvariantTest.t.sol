@@ -155,6 +155,9 @@ contract IrisInvariantTest is InvariantTest {
         address pod = _randomOpenPod(podSeed);
         if (pod == address(0)) return;
 
+        Loan memory loan = iris.getLoan(pod);
+        if (block.timestamp > loan.maturity + loan.overduePeriod) return;
+
         (address receiver,) = _randomUser(receiverSeed);
 
         uint256 maxWithdraw = _maxWithdrawCollateral(pod);
