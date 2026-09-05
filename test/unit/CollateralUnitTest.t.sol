@@ -41,6 +41,62 @@ contract CollateralUnitTest is UnitTest {
         assertEq(pos.collateral, amount);
     }
 
+    function testWithdrawCollateralTracksDirectVenueSupply() public {
+        uint256 collateral = 100e18;
+        uint256 debt = 10e18;
+        uint256 donated = 70e18;
+
+        StorageUtils.setLoanCollateralToken(address(iris), pod, collateralToken);
+        StorageUtils.setLoanDebtToken(address(iris), pod, debtToken);
+        StorageUtils.setLoanBorrower(address(iris), pod, borrower);
+        StorageUtils.setLoanMaturity(address(iris), pod, uint32(block.timestamp + 30 days));
+        StorageUtils.setPositionCollateral(address(iris), pod, uint128(collateral));
+        StorageUtils.setPositionDebt(address(iris), pod, uint128(debt));
+        StorageUtils.setPositionBondRequirement(address(iris), pod, 1);
+        StorageUtils.setPositionLastUpdate(address(iris), pod, uint32(block.timestamp));
+        StorageUtils.setPositionCollateralIndex(address(iris), pod, uint128(1e27));
+        StorageUtils.setPositionDebtIndex(address(iris), pod, uint128(1e27));
+        VenueAdapterMock(address(venueAdapter)).setIndices(1e27, 1e27);
+
+        // Someone supplies collateral directly on the venue for the pod, then the borrower withdraws it.
+        VenueAdapterMock(address(venueAdapter)).setPosition(collateral + donated, debt);
+
+        vm.prank(borrower);
+        iris.withdrawCollateral(pod, donated, receiver);
+
+        // The withdrawal came out of the direct supply, so tracked collateral is unchanged.
+        assertEq(iris.getPosition(pod).collateral, collateral);
+    }
+
+    function testRebaseTracksDirectVenueSupply() public {
+        uint256 collateral = 100e18;
+        uint256 debt = 10e18;
+        uint256 donated = 70e18;
+
+        StorageUtils.setLoanCollateralToken(address(iris), pod, collateralToken);
+        StorageUtils.setLoanDebtToken(address(iris), pod, debtToken);
+        StorageUtils.setPositionCollateral(address(iris), pod, uint128(collateral));
+        StorageUtils.setPositionDebt(address(iris), pod, uint128(debt));
+        StorageUtils.setPositionBondRequirement(address(iris), pod, 1);
+        StorageUtils.setPositionLastUpdate(address(iris), pod, uint32(block.timestamp));
+        StorageUtils.setPositionCollateralIndex(address(iris), pod, uint128(1e27));
+        StorageUtils.setPositionDebtIndex(address(iris), pod, uint128(1e27));
+        VenueAdapterMock(address(venueAdapter)).setIndices(1e27, 1e27);
+        VenueAdapterMock(address(venueAdapter)).setPosition(collateral + donated, debt);
+
+        vm.expectEmit();
+        emit EventsLib.Rebase(address(this), pod, collateral + donated, debt, collateral + donated, debt, 0);
+        iris.rebase(pod);
+
+        assertEq(iris.getPosition(pod).collateral, collateral + donated);
+        assertEq(iris.getPosition(pod).debt, debt);
+
+        // Synced already, so a rebase with nothing to track writes nothing and emits nothing.
+        vm.recordLogs();
+        iris.rebase(pod);
+        assertEq(vm.getRecordedLogs().length, 0);
+    }
+
     function testWithdrawCollateralReservesBadBond() public {
         uint256 collateral = 150e18;
         uint256 debt = 100e18;

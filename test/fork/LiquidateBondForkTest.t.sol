@@ -52,6 +52,7 @@ contract LiquidateBondForkTest is ForkTest {
         uint256 repaid = MathLib.min(bondSlashed - seized, venueDebt);
 
         uint256 receiverBalanceBefore = debtToken.balanceOf(receiver);
+        uint256 collateralBefore = iris.getPosition(pod).collateral;
         iris.liquidateBond(pod, receiver);
 
         assertEq(debtToken.balanceOf(receiver) - receiverBalanceBefore, seized);
@@ -63,7 +64,8 @@ contract LiquidateBondForkTest is ForkTest {
         Position memory pos = iris.getPosition(pod);
         assertEq(pos.bond, bond - bondSlashed);
         assertEq(pos.bondRequirement, 0);
-        assertEq(pos.collateral, 0);
+        // Collateral stays tracked for the borrower to withdraw or escape.
+        assertApproxEqAbs(pos.collateral, collateralBefore, 2);
         assertEq(pos.debt, 0);
         assertEq(pos.fixedLeg, 0);
         assertEq(pos.floatingLeg, 0);

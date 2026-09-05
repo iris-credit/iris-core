@@ -72,9 +72,9 @@ import {IVenueAdapter} from "./interfaces/IVenueAdapter.sol";
 /// @dev After bond liquidation, the borrower's loan position sits on the underlying venue getting variable interest
 /// rate.
 /// @dev On bond liquidation the solver forfeits the surplus. It is not settled to the solver, and the
-/// underlying collateral with its yield stays in the venue for the borrower to reclaim via escape,
-/// compensating the borrower for being forced to variable rate.
-/// @dev Borrower can close the underlying venue position by executing escape function.
+/// underlying collateral with its yield stays in the venue for the borrower, compensating the borrower for
+/// being forced to variable rate. It stays tracked as the borrower's collateral, so the borrower can withdraw
+/// it with withdrawCollateral or close the venue position with escape.
 /// @dev On bond liquidation the bond covers two things: the settlement the solver owes (floatingLeg minus
 /// fixedLeg), which repays the venue, and the liquidator bonus (seized). Both come out of the bond, so the
 /// solver pays the incentive. The borrower bears bad bond only when settlement plus bonus exceeds the bond.
@@ -103,16 +103,18 @@ import {IVenueAdapter} from "./interfaces/IVenueAdapter.sol";
 ///
 /// REBASE
 /// @dev Rebase acts only when both venue collateral and venue debt have fallen below their expected values
-/// (collateral + surplus, debt + floatingLeg), that is, a venue liquidation. One-sided venue changes (a direct
-/// collateral supply or debt repay on a pod) are out of scope and may be treated as unrecoverable donations.
+/// (collateral + surplus, debt + floatingLeg), that is, a venue liquidation. A direct debt repay on a pod is out
+/// of scope and may be treated as an unrecoverable donation.
+/// @dev Live collateral above the tracked collateral and surplus is a direct venue supply. Rebase tracks it as
+/// the borrower's collateral, so a withdrawal backed by it cannot pull tracked principal out of the surplus
+/// base or the liquidation seize cap.
 /// @dev Order is accrue, then rebase, then settle. Settlement runs on post-rebase (real venue) amounts, so the
 /// solver's claimable for net and surplus can never exceed what the pod can actually withdraw.
 /// @dev Legs accrue on the last synced collateral and debt, so after a venue liquidation they keep accruing
 /// on stale bases until rebase runs. The longer the delay, the further settlement drifts. Any resulting
 /// shift between borrower, solver, and bond is accepted.
 /// @dev A direct collateral supply to a pod's venue position (by anyone) raises venueCollateral, which can zero
-/// the liquidated term and make rebase skip even when a venue liquidation occurred. The donated collateral is
-/// recoverable by the borrower via escape.
+/// the liquidated term and make rebase skip a venue liquidation that occurred since the last sync.
 /// @dev After a venue liquidation, Iris recognizes venue debt reduction against the debt-token
 /// value of collateral lost since the last sync. A standard venue liquidation removes collateral
 /// worth the repaid debt plus liquidation bonus while reducing venue debt only by the repaid debt,
@@ -679,7 +681,6 @@ contract Iris is IIris {
         uint256 bondSlashed = MathLib.min(negativeNet + seized, pos.bond);
         uint256 repaid = MathLib.min(bondSlashed - seized, venueDebt);
 
-        pos.collateral = 0;
         pos.debt = 0;
         pos.bond -= bondSlashed.toUint128();
         pos.bondRequirement = 0;
@@ -830,7 +831,13 @@ contract Iris is IIris {
         uint256 liquidated = (pos.collateral + pos.surplus).zeroFloorSub(venueCollateral);
         uint256 repaid = (pos.debt + pos.floatingLeg).zeroFloorSub(venueDebt);
 
-        if (liquidated == 0 || repaid == 0) return;
+        if (liquidated == 0 || repaid == 0) {
+            if (venueCollateral > pos.collateral + pos.surplus) {
+                pos.collateral = (venueCollateral - pos.surplus).toUint128();
+                emit EventsLib.Rebase(msg.sender, pod, pos.collateral, pos.debt, venueCollateral, venueDebt, 0);
+            }
+            return;
+        }
 
         uint256 collateralPrice = IVenueAdapter(adapter).price(loan.collateralToken, loan.debtToken, pos.data);
         uint256 maxRepaid = liquidated.mulDivDown(collateralPrice, ORACLE_PRICE_SCALE);

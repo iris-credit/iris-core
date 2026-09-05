@@ -45,7 +45,7 @@ contract RebaseForkTest is ForkTest {
         assertEq(newPos.bondRequirement, pos.bondRequirement);
     }
 
-    // External collateral supply is a donation. rebase no-ops.
+    // External collateral supply is synced into the borrower's collateral.
     // (venue collateral > position collateral + surplus)
     function testRebaseExternalSupplyCollateral(
         uint256 collateral,
@@ -75,8 +75,12 @@ contract RebaseForkTest is ForkTest {
 
         iris.rebase(pod);
 
+        // The direct supply is tracked as the borrower's collateral.
+        (uint256 venueCollateral,) =
+            IVenueAdapter(iris.venueAdapter(venueId)).positionAssets(pod, collateralToken, debtToken, data);
         Position memory newPos = iris.getPosition(pod);
-        assertEq(newPos.collateral, pos.collateral);
+        assertEq(newPos.collateral, venueCollateral - newPos.surplus);
+        assertGe(newPos.collateral, pos.collateral);
         assertEq(newPos.debt, pos.debt);
         assertEq(newPos.bondRequirement, pos.bondRequirement);
     }
@@ -341,7 +345,8 @@ contract RebaseForkTest is ForkTest {
         assertEq(newPos.bondRequirement, 0);
     }
 
-    // External supply collateral with venue debt reduction(external repay or liquidated). rebase no-ops.
+    // External supply collateral with venue debt reduction (external repay or liquidated). rebase syncs the
+    // supply and leaves the one-sided debt reduction unreconciled.
     function testRebaseExternalSupplyCollateralWithDebtReduction(
         uint256 collateral,
         uint256 debt,
@@ -372,8 +377,9 @@ contract RebaseForkTest is ForkTest {
 
         iris.rebase(pod);
 
+        // The direct supply is tracked as collateral; the one-sided debt reduction stays unreconciled.
         Position memory newPos = iris.getPosition(pod);
-        assertEq(newPos.collateral, pos.collateral);
+        assertEq(newPos.collateral, pos.collateral + supplied);
         assertEq(newPos.debt, pos.debt);
         assertEq(newPos.bondRequirement, pos.bondRequirement);
     }
