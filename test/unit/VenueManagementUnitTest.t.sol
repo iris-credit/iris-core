@@ -199,6 +199,7 @@ contract VenueManagementUnitTest is UnitTest {
         iris.rebase(pod);
 
         StorageUtils.setPositionBondRequirement(address(iris), pod, 1);
+        StorageUtils.setPositionBond(address(iris), pod, 1);
 
         // Early return or Normal path
         StorageUtils.setPositionLastUpdate(address(iris), pod, uint32(block.timestamp));
