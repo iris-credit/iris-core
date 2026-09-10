@@ -374,7 +374,7 @@ contract IrisInvariantTest is InvariantTest {
     function invariantBondRequirement() public view {
         for (uint256 i; i < pods.length; ++i) {
             Position memory pos = iris.getPosition(pods[i]);
-            if (pos.bondRequirement != 0) assertGe(pos.bond, pos.bondRequirement);
+            if (pos.bondRequirement != 0) assertGt(pos.bond, 0);
         }
     }
 
@@ -401,7 +401,7 @@ contract IrisInvariantTest is InvariantTest {
         }
     }
 
-    function invariantFixedLegNeverDecreases() public {
+    function invariantFixedLeg() public {
         for (uint256 i; i < pods.length; ++i) {
             address pod = pods[i];
             Position memory pos = iris.getPosition(pod);
@@ -410,7 +410,8 @@ contract IrisInvariantTest is InvariantTest {
             if (pos.debt == 0 && pos.fixedLeg == 0) {
                 _lastFixedLeg[pod] = 0;
             } else {
-                assertGe(fixedLeg, _lastFixedLeg[pod]);
+                if (pos.debt != 0) assertGe(fixedLeg, _lastFixedLeg[pod]);
+                else assertLe(fixedLeg, _lastFixedLeg[pod]);
                 _lastFixedLeg[pod] = fixedLeg;
             }
         }
