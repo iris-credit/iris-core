@@ -110,10 +110,11 @@ import {IVenueAdapter} from "./interfaces/IVenueAdapter.sol";
 /// @dev Rebase acts only when both venue collateral and venue debt have fallen below their expected values
 /// (collateral + surplus, debt + floatingLeg), that is, a venue liquidation. A direct debt repay on a pod is out
 /// of scope and may be treated as an unrecoverable donation.
-/// @dev Recognized repayment over the principal is floating interest the borrower's collateral paid. it nets
+/// @dev Recognized repayment over the principal is floating interest the borrower's collateral paid. It nets
 /// against the fixed leg and the excess is refunded from the bond to the borrower's claimable, so the borrower does
-/// not pay both legs on the recognized portion. Bond that cannot cover the excess is bad bond borne by the borrower.
-/// A resolved loan (bad debt, wipe or exhausted bond) nets nothing.
+/// not pay both legs on the recognized portion. The borrower is credited at most the value of the collateral they
+/// lost. Repayment a seized surplus funded is not netted. Bond that cannot cover the excess is bad bond borne by the
+/// borrower. A resolved loan (bad debt, wipe or exhausted bond) nets nothing.
 /// @dev A venue wipe that zeroes both collateral and debt does not refund the floating.
 /// @dev Live collateral above the tracked collateral and surplus is a direct venue supply. Rebase tracks it as
 /// the borrower's collateral, so a withdrawal backed by it cannot pull tracked principal out of the surplus
@@ -857,7 +858,10 @@ contract Iris is IIris {
         if (venueDebt <= pos.floatingLeg) pos.floatingLeg = venueDebt.toUint128();
         if (badDebt != 0 || (venueDebt == 0 && venueCollateral == 0)) pos.bondRequirement = 0;
 
-        uint256 overpaid = pos.bondRequirement == 0 ? 0 : repaid.zeroFloorSub(pos.debt);
+        uint256 borrowerRepaid = MathLib.min(
+            repaid, MathLib.min(liquidated, pos.collateral).mulDivDown(collateralPrice, ORACLE_PRICE_SCALE)
+        );
+        uint256 overpaid = pos.bondRequirement == 0 ? 0 : borrowerRepaid.zeroFloorSub(pos.debt);
         uint256 bondSlashed = MathLib.min(overpaid.zeroFloorSub(pos.fixedLeg), pos.bond);
 
         pos.collateral = pos.collateral.zeroFloorSub(liquidated).toUint128();
