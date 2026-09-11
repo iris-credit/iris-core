@@ -241,7 +241,7 @@ contract BondUnitTest is UnitTest {
         vm.expectEmit();
         emit EventsLib.Claimable(debtToken, borrower, bondSlashed);
         vm.expectEmit();
-        emit EventsLib.Rebase(solver, pod, venueCollateral, 0, venueCollateral, venueDebt, 0);
+        emit EventsLib.Rebase(solver, pod, venueCollateral, 0, 0, bond - bondSlashed, venueCollateral, venueDebt, 0);
         vm.expectEmit();
         emit EventsLib.WithdrawBond(solver, pod, receiver, amount);
         iris.withdrawBond(pod, amount, receiver);
@@ -290,7 +290,9 @@ contract BondUnitTest is UnitTest {
         vm.expectEmit();
         emit EventsLib.Claimable(debtToken, borrower, bondSlashed);
         vm.expectEmit();
-        emit EventsLib.Rebase(address(this), pod, venueCollateral, 0, venueCollateral, venueDebt, 0);
+        emit EventsLib.Rebase(
+            address(this), pod, venueCollateral, 0, 0, bond - bondSlashed, venueCollateral, venueDebt, 0
+        );
         iris.rebase(pod);
 
         Position memory pos = iris.getPosition(pod);

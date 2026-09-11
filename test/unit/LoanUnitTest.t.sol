@@ -571,10 +571,23 @@ contract LoanUnitTest is UnitTest {
         vm.expectRevert(IIris.LoanNotCreated.selector);
         iris.liquidate(pod, receiver);
 
-        // Zero amount
+        // Zero amount ((debt + fixedLeg == 0) && (bondRequirement == 0))
         StorageUtils.setPositionLastUpdate(address(iris), pod, uint32(block.timestamp));
         vm.expectRevert(IIris.ZeroAmount.selector);
         iris.liquidate(pod, receiver);
+
+        // Normal path ((debt + fixedLeg == 0) && (bondRequirement != 0))
+        StorageUtils.setLoanCollateralToken(address(iris), pod, collateralToken);
+        StorageUtils.setLoanDebtToken(address(iris), pod, debtToken);
+        StorageUtils.setPositionBond(address(iris), pod, uint128(bond));
+        StorageUtils.setPositionBondRequirement(address(iris), pod, 1);
+        vm.expectEmit();
+        emit EventsLib.Liquidate(address(this), pod, receiver, 0, 0, 0);
+        (uint256 zeroRepaid, uint256 zeroSeized) = iris.liquidate(pod, receiver);
+        assertEq(zeroRepaid, 0);
+        assertEq(zeroSeized, 0);
+        assertEq(iris.getPosition(pod).bond, bond);
+        assertEq(iris.getPosition(pod).bondRequirement, 0);
 
         // Healthy loan - exactly at the overdue threshold (strict `>` keeps it healthy at the boundary).
         uint256 startTime = vm.getBlockTimestamp();
@@ -718,7 +731,7 @@ contract LoanUnitTest is UnitTest {
             )
         );
         vm.expectEmit();
-        emit EventsLib.Rebase(borrower, pod, 0, 0, venueCollateral, venueDebt, badDebt);
+        emit EventsLib.Rebase(borrower, pod, 0, 0, fixedLeg, bond, venueCollateral, venueDebt, badDebt);
         vm.expectEmit();
         emit EventsLib.Repay(borrower, pod, repaid, 0);
         uint256 returned = iris.repay(pod);
@@ -815,7 +828,9 @@ contract LoanUnitTest is UnitTest {
         );
         vm.expectCall(collateralToken, abi.encodeWithSelector(ERC20.transfer.selector, receiver, seized));
         vm.expectEmit();
-        emit EventsLib.Rebase(address(this), pod, rebasedCollateral, 0, venueCollateral, venueDebt, 0);
+        emit EventsLib.Rebase(
+            address(this), pod, rebasedCollateral, 0, rebasedFixedLeg, bond, venueCollateral, venueDebt, 0
+        );
         vm.expectEmit();
         emit EventsLib.Liquidate(address(this), pod, receiver, repaid, seized, 0);
         (uint256 returnedRepaid, uint256 returnedSeized) = iris.liquidate(pod, receiver);
