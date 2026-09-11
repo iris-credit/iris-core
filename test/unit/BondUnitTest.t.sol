@@ -76,8 +76,8 @@ contract BondUnitTest is UnitTest {
         StorageUtils.setPositionDebtIndex(address(iris), pod, uint128(1e27));
         StorageUtils.setLoanBondLltv(address(iris), pod, uint16(bondLltv / BP));
 
-        // The bond health is checked on the post-withdrawal bond (bond - amount).
-        if (!_isHealthyBond(bond - amount, bondRequirement, negativeNet)) {
+        // The requirement floor and the bond health are checked on the post-withdrawal bond (bond - amount).
+        if (bond - amount < bondRequirement || !_isHealthyBond(bond - amount, bondRequirement, negativeNet)) {
             // Insufficient bond - remaining bond below requirement, or drawdown exceeds bondLltv
             vm.expectRevert(IIris.InsufficientBond.selector);
             vm.prank(solver);
@@ -208,12 +208,13 @@ contract BondUnitTest is UnitTest {
 
     function testWithdrawBondRebaseAllowsLargerWithdrawal() public {
         uint256 bond = 1e18;
-        uint256 bondRequirement = 0.1e18;
+        uint256 bondRequirement = 0.01e18;
         uint256 staleFloatingLeg = 0.5e18;
         uint256 venueCollateral = 1e18;
         uint256 venueDebt = 0.01e18; // live debt has fallen well below the stale floating leg
-        uint256 amount = 0.9e18;
+        uint256 amount = 0.47e18;
 
+        StorageUtils.setLoanBorrower(address(iris), pod, borrower);
         StorageUtils.setLoanDebtToken(address(iris), pod, debtToken);
         StorageUtils.setLoanSolver(address(iris), pod, solver);
         StorageUtils.setLoanBondLltv(address(iris), pod, uint16(bondLltv / BP));
@@ -227,33 +228,44 @@ contract BondUnitTest is UnitTest {
         StorageUtils.setPositionDebtIndex(address(iris), pod, uint128(1e27));
         VenueAdapterMock(address(venueAdapter)).setPosition(venueCollateral, venueDebt);
 
+        uint256 overpaid = staleFloatingLeg - venueDebt;
+        uint256 bondSlashed = overpaid;
+
         assertFalse(_isHealthyBond(bond - amount, bondRequirement, staleFloatingLeg));
-        assertTrue(_isHealthyBond(bond - amount, bondRequirement, venueDebt));
+        assertTrue(_isHealthyBond(bond - bondSlashed - amount, bondRequirement, venueDebt));
 
         deal(debtToken, address(iris), amount);
 
         vm.prank(solver);
         vm.expectCall(debtToken, abi.encodeWithSelector(ERC20.transfer.selector, receiver, amount));
         vm.expectEmit();
+        emit EventsLib.Claimable(debtToken, borrower, bondSlashed);
+        vm.expectEmit();
+        emit EventsLib.Rebase(solver, pod, venueCollateral, 0, 0, bond - bondSlashed, venueCollateral, venueDebt, 0);
+        vm.expectEmit();
         emit EventsLib.WithdrawBond(solver, pod, receiver, amount);
         iris.withdrawBond(pod, amount, receiver);
 
         Position memory pos = iris.getPosition(pod);
-        assertEq(pos.bond, bond - amount);
+        assertEq(pos.bond, bond - bondSlashed - amount);
         assertEq(pos.floatingLeg, venueDebt);
+        assertEq(pos.fixedLeg, 0);
         assertEq(pos.debt, 0);
         assertEq(pos.collateral, venueCollateral);
         assertEq(pos.bondRequirement, bondRequirement);
+        assertEq(iris.claimable(debtToken, borrower), bondSlashed);
         assertEq(debtToken.balanceOf(receiver), amount);
     }
 
     function testLiquidateBondRebaseRestoresHealth() public {
         uint256 bond = 1e18;
         uint256 bondRequirement = 0.1e18;
-        uint256 staleFloatingLeg = 1e18;
+        uint256 staleFloatingLeg = 0.95e18;
         uint256 venueCollateral = 1e18;
         uint256 venueDebt = 0.01e18; // live debt has fallen well below the stale floating leg
 
+        StorageUtils.setLoanBorrower(address(iris), pod, borrower);
+        StorageUtils.setLoanSolver(address(iris), pod, solver);
         StorageUtils.setLoanDebtToken(address(iris), pod, debtToken);
         StorageUtils.setLoanBondLltv(address(iris), pod, uint16(bondLltv / BP));
         StorageUtils.setPositionLastUpdate(address(iris), pod, uint32(block.timestamp));
@@ -266,16 +278,39 @@ contract BondUnitTest is UnitTest {
         StorageUtils.setPositionDebtIndex(address(iris), pod, uint128(1e27));
         VenueAdapterMock(address(venueAdapter)).setPosition(venueCollateral, venueDebt);
 
+        uint256 overpaid = staleFloatingLeg - venueDebt;
+        uint256 bondSlashed = overpaid;
+
         assertFalse(_isHealthyBond(bond, bondRequirement, staleFloatingLeg));
-        assertTrue(_isHealthyBond(bond, bondRequirement, venueDebt));
+        assertTrue(_isHealthyBond(bond - bondSlashed, bondRequirement, venueDebt));
 
         vm.expectRevert(IIris.HealthyBond.selector);
         iris.liquidateBond(pod, receiver);
+
+        vm.expectEmit();
+        emit EventsLib.Claimable(debtToken, borrower, bondSlashed);
+        vm.expectEmit();
+        emit EventsLib.Rebase(
+            address(this), pod, venueCollateral, 0, 0, bond - bondSlashed, venueCollateral, venueDebt, 0
+        );
+        iris.rebase(pod);
+
+        Position memory pos = iris.getPosition(pod);
+        assertEq(pos.bond, bond - bondSlashed);
+        assertLt(pos.bond, pos.bondRequirement);
+        assertEq(pos.floatingLeg, venueDebt);
+        assertEq(iris.claimable(debtToken, borrower), bondSlashed);
+
+        vm.expectRevert(IIris.HealthyBond.selector);
+        iris.liquidateBond(pod, receiver);
+
+        vm.expectRevert(IIris.InsufficientBond.selector);
+        vm.prank(solver);
+        iris.withdrawBond(pod, 1, receiver);
     }
 
     function _isHealthyBond(uint256 bond, uint256 bondRequirement, uint256 negativeNet) internal view returns (bool) {
         if (bondRequirement == 0) return true;
-        if (bond < bondRequirement) return false;
         if (negativeNet == 0) return true;
         return negativeNet.mulDivUp(WAD, bond) <= bondLltv;
     }

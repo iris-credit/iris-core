@@ -36,9 +36,14 @@ abstract contract InvariantTest is ForkTest {
 
     modifier logCall(string memory name) {
         console.log(msg.sender, "->", name);
+        _beforeCall();
 
         _;
     }
+
+    /// @dev Invariant functions run without committing state, so any history an invariant compares against must
+    /// be recorded from the handler side, before the call.
+    function _beforeCall() internal virtual {}
 
     // supply to morpho so invariant runs can reach take paths more often.
     function _supplyMorpho() internal {
@@ -246,12 +251,9 @@ abstract contract InvariantTest is ForkTest {
     }
 
     function _isLiquidatablePod(address pod) internal view returns (bool) {
-        if (!_isCreatedPod(pod)) return false;
+        if (!_isRepayablePod(pod)) return false;
 
-        Position memory pos = iris.getPosition(pod);
         Loan memory loan = iris.getLoan(pod);
-
-        if (uint256(pos.debt) + pos.fixedLeg == 0) return false;
 
         return block.timestamp > uint256(loan.maturity) + loan.overduePeriod;
     }
@@ -263,7 +265,6 @@ abstract contract InvariantTest is ForkTest {
         Loan memory loan = iris.getLoan(pod);
 
         if (pos.bondRequirement == 0) return false;
-        if (pos.bond < pos.bondRequirement) return true;
 
         (,, uint256 fixedLeg, uint256 floatingLeg,) = iris.accrueLegsView(pod);
         if (floatingLeg <= fixedLeg) return false;

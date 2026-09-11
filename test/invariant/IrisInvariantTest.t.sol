@@ -52,6 +52,15 @@ contract IrisInvariantTest is InvariantTest {
         }
     }
 
+    /* Snapshots */
+
+    function _beforeCall() internal override {
+        for (uint256 i; i < pods.length; ++i) {
+            (,, uint256 fixedLeg,,) = iris.accrueLegsView(pods[i]);
+            _lastFixedLeg[pods[i]] = fixedLeg;
+        }
+    }
+
     /* Handlers */
 
     function mineToMaturity(uint256 podSeed, uint256 elapsedSeed) external logCall("mineToMaturity") {
@@ -374,7 +383,7 @@ contract IrisInvariantTest is InvariantTest {
     function invariantBondRequirement() public view {
         for (uint256 i; i < pods.length; ++i) {
             Position memory pos = iris.getPosition(pods[i]);
-            if (pos.bondRequirement != 0) assertGe(pos.bond, pos.bondRequirement);
+            if (pos.bondRequirement != 0) assertGt(pos.bond, 0);
         }
     }
 
@@ -401,18 +410,15 @@ contract IrisInvariantTest is InvariantTest {
         }
     }
 
-    function invariantFixedLegNeverDecreases() public {
+    function invariantFixedLeg() public view {
         for (uint256 i; i < pods.length; ++i) {
             address pod = pods[i];
             Position memory pos = iris.getPosition(pod);
-            (,, uint256 fixedLeg,,) = iris.accrueLegsView(pod);
+            if (pos.debt == 0 && pos.fixedLeg == 0) continue;
 
-            if (pos.debt == 0 && pos.fixedLeg == 0) {
-                _lastFixedLeg[pod] = 0;
-            } else {
-                assertGe(fixedLeg, _lastFixedLeg[pod]);
-                _lastFixedLeg[pod] = fixedLeg;
-            }
+            (,, uint256 fixedLeg,,) = iris.accrueLegsView(pod);
+            if (pos.debt != 0) assertGe(fixedLeg, _lastFixedLeg[pod]);
+            else assertLe(fixedLeg, _lastFixedLeg[pod]);
         }
     }
 

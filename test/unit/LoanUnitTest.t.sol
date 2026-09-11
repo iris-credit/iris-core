@@ -571,10 +571,23 @@ contract LoanUnitTest is UnitTest {
         vm.expectRevert(IIris.LoanNotCreated.selector);
         iris.liquidate(pod, receiver);
 
-        // Zero amount
+        // Zero amount ((debt + fixedLeg == 0) && (bondRequirement == 0))
         StorageUtils.setPositionLastUpdate(address(iris), pod, uint32(block.timestamp));
         vm.expectRevert(IIris.ZeroAmount.selector);
         iris.liquidate(pod, receiver);
+
+        // Normal path ((debt + fixedLeg == 0) && (bondRequirement != 0))
+        StorageUtils.setLoanCollateralToken(address(iris), pod, collateralToken);
+        StorageUtils.setLoanDebtToken(address(iris), pod, debtToken);
+        StorageUtils.setPositionBond(address(iris), pod, uint128(bond));
+        StorageUtils.setPositionBondRequirement(address(iris), pod, 1);
+        vm.expectEmit();
+        emit EventsLib.Liquidate(address(this), pod, receiver, 0, 0, 0);
+        (uint256 zeroRepaid, uint256 zeroSeized) = iris.liquidate(pod, receiver);
+        assertEq(zeroRepaid, 0);
+        assertEq(zeroSeized, 0);
+        assertEq(iris.getPosition(pod).bond, bond);
+        assertEq(iris.getPosition(pod).bondRequirement, 0);
 
         // Healthy loan - exactly at the overdue threshold (strict `>` keeps it healthy at the boundary).
         uint256 startTime = vm.getBlockTimestamp();
@@ -718,7 +731,7 @@ contract LoanUnitTest is UnitTest {
             )
         );
         vm.expectEmit();
-        emit EventsLib.Rebase(borrower, pod, 0, 0, venueCollateral, venueDebt, badDebt);
+        emit EventsLib.Rebase(borrower, pod, 0, 0, fixedLeg, bond, venueCollateral, venueDebt, badDebt);
         vm.expectEmit();
         emit EventsLib.Repay(borrower, pod, repaid, 0);
         uint256 returned = iris.repay(pod);
@@ -744,19 +757,21 @@ contract LoanUnitTest is UnitTest {
         assertEq(iris.claimable(collateralToken, solver), 27e18);
         assertEq(iris.claimable(debtToken, feeRecipient), 1e18);
         assertEq(iris.claimable(collateralToken, feeRecipient), 3e18);
+        assertEq(iris.claimable(debtToken, borrower), 0);
 
         assertEq(debtToken.balanceOf(address(iris)), 15e18); // bond 5e18 + net 10e18
         assertEq(debtToken.balanceOf(pod), venueDebt);
         assertEq(debtToken.balanceOf(borrower), 0);
     }
 
-    /// @dev Ensure `claimable` equals the post-rebase leg, not the pre-rebase leg.
+    /// @dev Ensure `claimable` equals the post-rebase legs (floating leg clamped to the venue debt, fixed leg netted by
+    /// the recognized repayment above the principal), not the pre-rebase legs.
     function testLiquidateSettlesOnRebasedLegs() public {
         uint256 collateral = 100e18;
         uint256 debt = 0;
         uint256 surplus = 0;
         uint256 floatingLeg = 100e18;
-        uint256 fixedLeg = 50e18;
+        uint256 fixedLeg = 120e18;
         uint256 bond = 5e18;
         uint256 fee = 0.1e18;
         uint256 price = ORACLE_PRICE_SCALE;
@@ -777,7 +792,14 @@ contract LoanUnitTest is UnitTest {
 
         uint256 liquidated = (collateral + surplus).zeroFloorSub(venueCollateral);
         uint256 rebasedCollateral = collateral.zeroFloorSub(liquidated);
-        uint256 repaid = debt + fixedLeg;
+        // venue debt drops 60e18, venue collateral drops 40e18
+        // repaid == max(repaid, maxRepaid) == 40e18
+        // overpaid == 40e18
+        // fixedLeg 120e18 -> 80e18, floatingLeg 100e18 -> 40e18, bond 5e18 untouched (overpaid < fixedLeg).
+        uint256 maxRepaid = liquidated.mulDivDown(price, ORACLE_PRICE_SCALE);
+        uint256 overpaid = MathLib.min(debt + floatingLeg - venueDebt, maxRepaid).zeroFloorSub(debt);
+        uint256 rebasedFixedLeg = fixedLeg - overpaid;
+        uint256 repaid = debt + rebasedFixedLeg;
         uint256 lif =
             MathLib.min(MAX_LIF, MAX_LIF.mulDivDown(timestamp - (startTime + MAX_OVERDUE_PERIOD), TIME_TO_MAX_LIF));
         uint256 seized =
@@ -806,7 +828,9 @@ contract LoanUnitTest is UnitTest {
         );
         vm.expectCall(collateralToken, abi.encodeWithSelector(ERC20.transfer.selector, receiver, seized));
         vm.expectEmit();
-        emit EventsLib.Rebase(address(this), pod, rebasedCollateral, 0, venueCollateral, venueDebt, 0);
+        emit EventsLib.Rebase(
+            address(this), pod, rebasedCollateral, 0, rebasedFixedLeg, bond, venueCollateral, venueDebt, 0
+        );
         vm.expectEmit();
         emit EventsLib.Liquidate(address(this), pod, receiver, repaid, seized, 0);
         (uint256 returnedRepaid, uint256 returnedSeized) = iris.liquidate(pod, receiver);
@@ -824,14 +848,15 @@ contract LoanUnitTest is UnitTest {
         assertEq(pos.surplus, 0);
         assertEq(pos.lastUpdate, uint32(timestamp));
 
-        // solver net = fixed leg (50e18) - rebased floating leg (40e18) = 10e18
-        assertEq(iris.claimable(debtToken, solver), 9e18);
+        // solver net = rebased fixed leg (80e18) - rebased floating leg (40e18) = 40e18
+        assertEq(iris.claimable(debtToken, solver), 36e18);
         assertEq(iris.claimable(collateralToken, solver), 0);
-        assertEq(iris.claimable(debtToken, feeRecipient), 1e18);
+        assertEq(iris.claimable(debtToken, feeRecipient), 4e18);
         assertEq(iris.claimable(collateralToken, feeRecipient), 0);
+        assertEq(iris.claimable(debtToken, borrower), 0);
 
         assertEq(collateralToken.balanceOf(receiver), seized);
-        assertEq(debtToken.balanceOf(address(iris)), 15e18); // bond 5e18 + net 10e18
+        assertEq(debtToken.balanceOf(address(iris)), 45e18); // bond 5e18 + net 40e18
         assertEq(debtToken.balanceOf(pod), venueDebt);
         assertEq(debtToken.balanceOf(address(this)), 0);
     }
@@ -876,6 +901,7 @@ contract LoanUnitTest is UnitTest {
         uint256 floatingLeg,
         uint256 surplus
     ) internal {
+        StorageUtils.setLoanBorrower(address(iris), pod, borrower);
         StorageUtils.setLoanSolver(address(iris), pod, solver);
         StorageUtils.setLoanCollateralToken(address(iris), pod, collateralToken);
         StorageUtils.setLoanDebtToken(address(iris), pod, debtToken);
