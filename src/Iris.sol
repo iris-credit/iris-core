@@ -844,7 +844,9 @@ contract Iris is IIris {
         if (liquidated == 0 || repaid == 0) {
             if (venueCollateral > pos.collateral + pos.surplus) {
                 pos.collateral = (venueCollateral - pos.surplus).toUint128();
-                emit EventsLib.Rebase(msg.sender, pod, pos.collateral, pos.debt, venueCollateral, venueDebt, 0);
+                emit EventsLib.Rebase(
+                    msg.sender, pod, pos.collateral, pos.debt, pos.fixedLeg, pos.bond, venueCollateral, venueDebt, 0
+                );
             }
             return;
         }
@@ -873,7 +875,9 @@ contract Iris is IIris {
         }
         if (pos.bond == 0) pos.bondRequirement = 0;
 
-        emit EventsLib.Rebase(msg.sender, pod, pos.collateral, pos.debt, venueCollateral, venueDebt, badDebt);
+        emit EventsLib.Rebase(
+            msg.sender, pod, pos.collateral, pos.debt, pos.fixedLeg, pos.bond, venueCollateral, venueDebt, badDebt
+        );
     }
 
     /* INTEREST FUNCTIONS */
