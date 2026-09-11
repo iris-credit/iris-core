@@ -21,6 +21,7 @@ import {IVenueAdapter} from "./interfaces/IVenueAdapter.sol";
 ///
 /// REPAY
 /// @dev Early repay still owes fixed interest through maturity.
+/// @dev Principal retired by a venue liquidation owes fixed interest only up to the rebase, not through maturity.
 /// @dev Repay also closes a loan whose debt and fixedLeg are already zero but bondRequirement is
 /// non-zero (for example after a venue liquidation that retired the principal and netted the fixed leg),
 /// letting the solver withdraw the remaining bond.
@@ -68,8 +69,9 @@ import {IVenueAdapter} from "./interfaces/IVenueAdapter.sol";
 /// bondRequirement with enough buffer that normal accrual does not immediately make the bond liquidatable.
 /// @dev A rebase can slash the bond below bondRequirement. The bondRequirement is a withdrawal
 /// floor, not a liquidation trigger. bond liquidation opens only on drawdown.
+/// @dev While a slash leaves the bond below bondRequirement the solver cannot withdraw. Its exit is repay.
 /// @dev A rebase that zeroes the bond resolves the loan like a bond liquidation would, so an open loan always holds a
-/// non-zero bond.
+/// non-zero bond. As on bond liquidation, the solver forfeits the surplus.
 ///
 /// BOND LIQUIDATION
 /// @dev Small positions may not be liquidated due to the liquidation incentive <= gas cost.
