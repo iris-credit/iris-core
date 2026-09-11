@@ -36,9 +36,14 @@ abstract contract InvariantTest is ForkTest {
 
     modifier logCall(string memory name) {
         console.log(msg.sender, "->", name);
+        _beforeCall();
 
         _;
     }
+
+    /// @dev Invariant functions run without committing state, so any history an invariant compares against must
+    /// be recorded from the handler side, before the call.
+    function _beforeCall() internal virtual {}
 
     // supply to morpho so invariant runs can reach take paths more often.
     function _supplyMorpho() internal {
