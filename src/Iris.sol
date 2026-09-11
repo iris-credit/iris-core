@@ -68,7 +68,7 @@ import {IVenueAdapter} from "./interfaces/IVenueAdapter.sol";
 /// the solver self-liquidate to exit the fixed position without penalty. It's accepted as the BLM sizes
 /// bondRequirement with enough buffer that normal accrual does not immediately make the bond liquidatable.
 /// @dev A rebase can slash the bond below bondRequirement. The bondRequirement is a withdrawal
-/// floor, not a liquidation trigger. bond liquidation opens only on drawdown.
+/// floor, not a liquidation trigger. Bond liquidation opens only on drawdown.
 /// @dev While a slash leaves the bond below bondRequirement the solver cannot withdraw. Its exit is repay.
 /// @dev A rebase that zeroes the bond resolves the loan like a bond liquidation would, so an open loan always holds a
 /// non-zero bond. As on bond liquidation, the solver forfeits the surplus.
@@ -134,8 +134,9 @@ import {IVenueAdapter} from "./interfaces/IVenueAdapter.sol";
 /// so the liquidation-bonus buffer is the headroom for borrower direct venue repayment to be
 /// recognized by rebase. Extra one-sided venue repayment is outside rebase.
 /// @dev Rebase prices the lost collateral at the adapter's current oracle price, not at the price used
-/// by the venue liquidation. Large price moves between the venue liquidation and the rebase call can
-/// change how much debt reduction is recognized and whether bad debt is detected.
+/// by the venue liquidation. Large price moves between the venue liquidation and the rebase call can change how much
+/// debt reduction is recognized, how much paid floating is netted against the fixed leg and refunded from the bond,
+/// and whether bad debt is detected.
 /// @dev Debt that rebase does not recognize, from either cause above, leaves the stored debt above the real
 /// venue debt. At close the closer repays the stored amount while only the venue debt is forwarded to the
 /// venue, so the difference stays in Iris with no owner and counts as a donation.
@@ -874,8 +875,11 @@ contract Iris is IIris {
         if (bondSlashed != 0) {
             pos.bond -= bondSlashed.toUint128();
             _claimable(loan.debtToken, bondSlashed, loan.borrower);
+            if (pos.bond == 0) {
+                pos.bondRequirement = 0;
+                pos.surplus = 0;
+            }
         }
-        if (pos.bond == 0) pos.bondRequirement = 0;
 
         emit EventsLib.Rebase(
             msg.sender, pod, pos.collateral, pos.debt, pos.fixedLeg, pos.bond, venueCollateral, venueDebt, badDebt
