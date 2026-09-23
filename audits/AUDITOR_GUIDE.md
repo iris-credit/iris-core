@@ -42,11 +42,12 @@ Points along this path that warrant attention:
   liquidation, bad debt, a wipe of both collateral and debt, and donations (one-sided supply or
   repay on the pod). Its recognized debt reduction (`maxRepaid`), the `borrowerRepaid` cap that
   keeps repayment funded by a seized surplus out of the netting, the surplus/`floatingLeg` clamps,
-  the three ways `bondRequirement` flips to zero (bad debt, wipe, a slash that exhausts the bond),
+  the three ways `bondRequirement` flips to zero (bad debt, venue debt fully retired, a slash that
+  exhausts the bond),
   and the `zeroFloorSub` / `toUint128` chains each carry value-corrupting edge cases.
-- Statement order inside `_rebase` is load-bearing. `overpaid` reads `bondRequirement` after the
-  resolve flip, so a loan resolved by this or an earlier rebase nets nothing, and it reads `pos.debt`
-  before the principal is written down.
+- Statement order inside `_rebase` is load-bearing. `overpaid` reads `bondRequirement` before the
+  resolve flip, so the resolving rebase nets and only a loan resolved by an earlier rebase nets
+  nothing, and it reads `pos.debt` before the principal is written down.
 - The protocol rests on the invariant that post-rebase settlement never credits more than the pod
   can withdraw (header 124-125); oracle movement, venue rounding, and adapter behavior all feed it.
 - Legs accrue on the last synced balances, so the longer a venue liquidation goes un-rebased the
@@ -83,7 +84,8 @@ The rest of the surface (bond math, EIP-712 signatures, access control, fees) is
 - **surplus**: collateral venue yield, owed to the solver.
 - **bond**: the solver's posted debt-token stake covering the negative net.
 - **bondRequirement**: minimum bond from the BLM; a withdrawal floor, not a liquidation trigger;
-  `0` means the loan is resolved/closed.
+  `0` means the loan is resolved (bond obligation over); it is closed once debt, fixed leg and surplus
+  are also zero.
 - **bad bond**: `negativeNet` exceeds the whole bond, so the borrower bears the remainder. Also
   arises inside `_rebase` when the bond cannot cover the netting excess.
 - **bad debt**: venue debt exceeds the debt-token value of remaining venue collateral.
@@ -91,7 +93,9 @@ The rest of the surface (bond math, EIP-712 signatures, access control, fees) is
   borrower's collateral paid, netted against `fixedLeg` and then slashed from the bond to the
   borrower.
 - **resolved**: `bondRequirement == 0` on a loan that was never closed by repay or liquidate,
-  reached by bad debt, a venue wipe, a bond liquidation, or a slash that exhausts the bond. `rebase`
-  and the close paths shut down; the borrower's remaining exits are `escape` and `claim`.
+  reached by bad debt, any liquidation that retires the whole venue debt (a wipe included), a bond
+  liquidation, or a slash that exhausts the bond. `rebase` shuts down; repay and liquidate stay open
+  while fixed leg or surplus is outstanding; `escape` needs the loan resolved and settled (debt,
+  fixed leg and surplus zero).
 - **claimable**: pooled per (token, account) credit held inside Iris and withdrawn with `claim`.
   Solvers, the fee recipient, and, since the netting refund, borrowers hold balances in it.
