@@ -217,8 +217,9 @@ contract IrisAdapterForkTest is PeripheryForkTest {
         Quote memory quote = _buildAaveV3Quote(collateral, debt);
         address pod = _openLoan(quote);
 
-        // A resolved loan (zero bond requirement) is escapable by the borrower.
+        // A resolved and settled loan (zero bond requirement, nothing outstanding) is escapable by the borrower.
         StorageUtils.setPositionBondRequirement(address(iris), pod, 0);
+        StorageUtils.setPositionDebt(address(iris), pod, 0);
 
         (uint256 venueCollateral, uint256 venueDebt) =
             aaveV3Adapter.positionAssets(pod, quote.collateralToken, quote.debtToken, quote.data);

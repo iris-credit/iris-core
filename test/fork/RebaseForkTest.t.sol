@@ -239,7 +239,7 @@ contract RebaseForkTest is ForkTest {
         assertEq(newPos.bondRequirement, pos.bondRequirement);
     }
 
-    // Liquidation to zero venue debt but collateral remains. bondRequirement is kept.
+    // Liquidation to zero venue debt but collateral remains. No venue debt left resolves the loan.
     function testRebaseVenueFullLiquidation(
         uint256 collateral,
         uint256 debt,
@@ -280,7 +280,7 @@ contract RebaseForkTest is ForkTest {
         Position memory newPos = iris.getPosition(pod);
         assertEq(newPos.collateral, remainingCollateral);
         assertEq(newPos.debt, expectedDebt);
-        assertEq(newPos.bondRequirement, pos.bondRequirement);
+        assertEq(newPos.bondRequirement, 0);
     }
 
     // Liquidation to zero venue position (zero collateral, debt) resolves the loan.
@@ -442,8 +442,7 @@ contract RebaseForkTest is ForkTest {
         assertEq(newPos.fixedLeg, fixedLeg.zeroFloorSub(overpaid));
         assertEq(newPos.floatingLeg, 0);
         assertEq(newPos.bond, pos.bond - bondSlashed);
-        // A slash that exhausts the bond resolves the loan.
-        assertEq(newPos.bondRequirement, newPos.bond == 0 ? 0 : pos.bondRequirement);
+        assertEq(newPos.bondRequirement, 0);
         assertEq(iris.claimable(debtToken, borrower), bondSlashed);
     }
 
@@ -556,3 +555,4 @@ contract RebaseForkTest is ForkTest {
         quote.bond = blm.bondRequirement(quote);
     }
 }
+
