@@ -82,7 +82,7 @@ import {IVenueAdapter} from "./interfaces/IVenueAdapter.sol";
 /// @dev On bond liquidation the solver forfeits the surplus. It is not settled to the solver, and the
 /// underlying collateral with its yield stays in the venue for the borrower, compensating the borrower for
 /// being forced to variable rate. It stays tracked as the borrower's collateral, so the borrower can withdraw
-/// it with withdrawCollateral or close the venue position with escape.
+/// it with withdrawCollateral until maturity + overduePeriod or close the venue position with escape at any time.
 /// @dev On bond liquidation the bond covers two things: the settlement the solver owes (floatingLeg minus
 /// fixedLeg), which repays the venue, and the liquidator bonus (seized). Both come out of the bond, so the
 /// solver pays the incentive. The borrower bears bad bond only when settlement plus bonus exceeds the bond.
