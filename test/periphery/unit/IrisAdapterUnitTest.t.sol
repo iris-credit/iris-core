@@ -294,8 +294,9 @@ contract IrisAdapterUnitTest is PeripheryUnitTest {
         (collateral, debt, bond) = _boundQuoteAmounts(collateral, debt, bond);
         (address pod,) = _openLoan(collateral, debt, bond);
 
-        // A resolved loan (zero bond requirement) is escapable by the borrower.
+        // A resolved and settled loan (zero bond requirement, nothing outstanding) is escapable by the borrower.
         StorageUtils.setPositionBondRequirement(address(iris), pod, 0);
+        StorageUtils.setPositionDebt(address(iris), pod, 0);
 
         deal(debtToken, borrower, debt);
 

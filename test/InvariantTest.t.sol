@@ -228,10 +228,11 @@ abstract contract InvariantTest is ForkTest {
         return iris.getPosition(pod).bondRequirement != 0;
     }
 
+    /// @dev Resolved and settled: escape needs bondRequirement zero and nothing outstanding (debt, fixed leg, surplus).
     function _isResolvedPod(address pod) internal view returns (bool) {
         Position memory pos = iris.getPosition(pod);
 
-        return pos.lastUpdate != 0 && pos.bondRequirement == 0;
+        return pos.lastUpdate != 0 && pos.bondRequirement == 0 && uint256(pos.debt) + pos.fixedLeg + pos.surplus == 0;
     }
 
     function _isRepayablePod(address pod) internal view returns (bool) {
@@ -239,7 +240,7 @@ abstract contract InvariantTest is ForkTest {
 
         Position memory pos = iris.getPosition(pod);
 
-        return uint256(pos.debt) + pos.fixedLeg != 0 || pos.bondRequirement != 0;
+        return uint256(pos.debt) + pos.fixedLeg != 0 || pos.bondRequirement != 0 || pos.surplus != 0;
     }
 
     function _isEarlyRepayablePod(address pod) internal view returns (bool) {
