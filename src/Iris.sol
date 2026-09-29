@@ -70,9 +70,10 @@ import {IVenueAdapter} from "./interfaces/IVenueAdapter.sol";
 /// @dev A rebase can slash the bond below bondRequirement. The bondRequirement is a withdrawal
 /// floor, not a liquidation trigger. Bond liquidation opens only on drawdown.
 /// @dev While a slash leaves the bond below bondRequirement on a loan that still has venue debt, the solver cannot
-/// withdraw. its exit is repay. Once the venue debt is retired the loan resolves and the floor no longer applies.
-/// @dev A rebase that zeroes the bond resolves the loan like a bond liquidation would, so an open loan always holds a
-/// non-zero bond. As on bond liquidation, the solver forfeits the surplus.
+/// withdraw. its exit is repay. Once the venue debt is retired bondRequirement drops to zero and the floor no longer
+/// applies.
+/// @dev A rebase that zeroes the bond zeroes bondRequirement too, as a bond liquidation would, so an open loan always
+/// holds a non-zero bond. As on bond liquidation, the solver forfeits the surplus.
 ///
 /// BOND LIQUIDATION
 /// @dev Small positions may not be liquidated due to the liquidation incentive <= gas cost.
@@ -113,13 +114,13 @@ import {IVenueAdapter} from "./interfaces/IVenueAdapter.sol";
 /// @dev Rebase acts only when both venue collateral and venue debt have fallen below their expected values
 /// (collateral + surplus, debt + floatingLeg), that is, a venue liquidation. A direct debt repay on a pod is out
 /// of scope and may be treated as an unrecoverable donation. One that retires the venue debt before a liquidation is
-/// rebased also resolves the loan, but stays unrecognized and cannot raise the refund.
+/// rebased also zeroes bondRequirement, but stays unrecognized and cannot raise the refund.
 /// @dev Recognized repayment over the principal is floating interest the borrower's collateral paid. It nets
 /// against the fixed leg and the excess is refunded from the bond to the borrower's claimable, so the borrower does
 /// not pay both legs on the recognized portion. The borrower is credited at most the value of the collateral they
 /// lost. Repayment a seized surplus funded is not netted. Bond that cannot cover the excess is bad bond borne by the
-/// borrower. The rebase that resolves the loan nets like any other, a venue wipe included. A loan already resolved
-/// nets nothing.
+/// borrower. The rebase that zeroes bondRequirement nets like any other, a venue wipe included. A loan whose
+/// bondRequirement is already zero nets nothing.
 /// @dev Live collateral above the tracked collateral and surplus is a direct venue supply. Rebase tracks it as
 /// the borrower's collateral, so a withdrawal backed by it cannot pull tracked principal out of the surplus
 /// base or the liquidation seize cap.
@@ -144,12 +145,13 @@ import {IVenueAdapter} from "./interfaces/IVenueAdapter.sol";
 /// venue, so the difference stays in Iris with no owner and counts as a donation.
 /// @dev Surplus can be greater than the venue collateral in an extreme case where most of the collateral got
 /// liquidated in the underlying venue. In such a case, the surplus shrinks to venue collateral.
-/// @dev Resolved (bondRequirement zero) means the solver's bond obligation is over, not that the loan is closed. the
-/// borrower may still owe the fixed leg and the pod may still hold the solver's surplus. Rebase resolves on bad debt,
+/// @dev A zero bondRequirement means the solver's bond obligation is over, not that the loan is resolved. the
+/// borrower may still owe the fixed leg and the pod may still hold the solver's surplus. Rebase zeroes it on bad debt,
 /// on the venue debt being fully retired (the signal is venue debt because a third party can add collateral to a pod
-/// but cannot borrow on it), or on a slash that exhausts the bond. Once resolved the solver can withdraw the bond even
+/// but cannot borrow on it), or on a slash that exhausts the bond. From then on the solver can withdraw the bond even
 /// when net is negative and surplus stops accruing. fixed leg and surplus outstanding are settled by repay or
-/// liquidate, which stay callable while either remains, and escape requires debt, fixed leg and surplus to be zero.
+/// liquidate, which stay callable while either remains. The loan is resolved once bondRequirement, debt, fixed leg
+/// and surplus are all zero, which is what escape requires.
 /// Surplus is forfeited only when the bond is gone (exhaustion, bond liquidation).
 /// @dev If a bad-debt loan is nonetheless closed via repay or liquidate, legs settle normally and the
 /// solver receives net and surplus, since the closer repays the debt and fixed interest in full.
