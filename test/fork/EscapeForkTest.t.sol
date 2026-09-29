@@ -23,7 +23,9 @@ contract EscapeForkTest is ForkTest {
         Quote memory quote = _buildQuote(collateralToken, debtToken, collateral, debt, venueId, data);
         address pod = _openLoan(quote);
 
+        // Resolved and settled, as after a bond liquidation; the live venue debt is repaid on the way out.
         StorageUtils.setPositionBondRequirement(address(iris), pod, 0);
+        StorageUtils.setPositionDebt(address(iris), pod, 0);
 
         (uint256 venueCollateral, uint256 venueDebt) = adapter.positionAssets(pod, collateralToken, debtToken, data);
         uint256 receiverBalanceBefore = collateralToken.balanceOf(receiver);

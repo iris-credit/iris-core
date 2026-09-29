@@ -21,8 +21,10 @@ import {IVenueAdapter} from "./interfaces/IVenueAdapter.sol";
 ///
 /// REPAY
 /// @dev Early repay still owes fixed interest through maturity.
+/// @dev Principal retired by a venue liquidation owes fixed interest only up to the rebase, not through maturity.
 /// @dev Repay also closes a loan whose debt and fixedLeg are already zero but bondRequirement is
-/// non-zero (for example after a venue-side wipe), letting the solver withdraw the remaining bond.
+/// non-zero (for example after a venue liquidation that retired the principal and netted the fixed leg),
+/// letting the solver withdraw the remaining bond.
 /// @dev A borrower has no incentive to repay once the bad bond they must cover exceeds their remaining
 /// collateral, since they would pay in more than they get back.
 /// @dev Bad-debt loans (venue debt exceeds the debt-token value of the remaining venue collateral) can
@@ -32,8 +34,13 @@ import {IVenueAdapter} from "./interfaces/IVenueAdapter.sol";
 ///
 /// COLLATERAL
 /// @dev Iris lets borrowers withdraw collateral up to the underlying venue's LLTV edge. It only checks that
-/// the remaining collateral covers the borrower's debt and fixed interest through maturity + overduePeriod.
-/// Managing venue health is the borrower's responsibility.
+/// the remaining collateral covers the borrower's debt, fixed interest through maturity + overduePeriod, and
+/// any bad bond. Managing venue health is the borrower's responsibility.
+/// @dev Once the loan is liquidatable, withdrawCollateral reverts, so a borrower cannot withdraw against a
+/// pending liquidation.
+/// @dev The reserve is the projected liquidation exposure: fixed interest through the liquidation window, or
+/// the floating leg beyond the bond if that is larger. Fixed interest accruing shrinks the bad bond one-for-one,
+/// so the two are never summed.
 /// @dev The withdrawCollateral check counts interest only through maturity + overduePeriod, but interest
 /// keeps accruing until the loan is closed. Interest accruing between liquidation becoming possible and
 /// being executed is therefore unchecked. It is expected to be small and covered by the venue LLTV buffer.
@@ -60,6 +67,13 @@ import {IVenueAdapter} from "./interfaces/IVenueAdapter.sol";
 /// @dev Since the solver controls bond withdrawals, withdrawBond can leave the bond at the bondLltv edge, letting
 /// the solver self-liquidate to exit the fixed position without penalty. It's accepted as the BLM sizes
 /// bondRequirement with enough buffer that normal accrual does not immediately make the bond liquidatable.
+/// @dev A rebase can slash the bond below bondRequirement. The bondRequirement is a withdrawal
+/// floor, not a liquidation trigger. Bond liquidation opens only on drawdown.
+/// @dev While a slash leaves the bond below bondRequirement on a loan that still has venue debt, the solver cannot
+/// withdraw. its exit is repay. Once the venue debt is retired bondRequirement drops to zero and the floor no longer
+/// applies.
+/// @dev A rebase that zeroes the bond zeroes bondRequirement too, as a bond liquidation would, so an open loan always
+/// holds a non-zero bond. As on bond liquidation, the solver forfeits the surplus.
 ///
 /// BOND LIQUIDATION
 /// @dev Small positions may not be liquidated due to the liquidation incentive <= gas cost.
@@ -67,9 +81,9 @@ import {IVenueAdapter} from "./interfaces/IVenueAdapter.sol";
 /// @dev After bond liquidation, the borrower's loan position sits on the underlying venue getting variable interest
 /// rate.
 /// @dev On bond liquidation the solver forfeits the surplus. It is not settled to the solver, and the
-/// underlying collateral with its yield stays in the venue for the borrower to reclaim via escape,
-/// compensating the borrower for being forced to variable rate.
-/// @dev Borrower can close the underlying venue position by executing escape function.
+/// underlying collateral with its yield stays in the venue for the borrower, compensating the borrower for
+/// being forced to variable rate. It stays tracked as the borrower's collateral, so the borrower can withdraw
+/// it with withdrawCollateral until maturity + overduePeriod or close the venue position with escape at any time.
 /// @dev On bond liquidation the bond covers two things: the settlement the solver owes (floatingLeg minus
 /// fixedLeg), which repays the venue, and the liquidator bonus (seized). Both come out of the bond, so the
 /// solver pays the incentive. The borrower bears bad bond only when settlement plus bonus exceeds the bond.
@@ -98,29 +112,47 @@ import {IVenueAdapter} from "./interfaces/IVenueAdapter.sol";
 ///
 /// REBASE
 /// @dev Rebase acts only when both venue collateral and venue debt have fallen below their expected values
-/// (collateral + surplus, debt + floatingLeg), that is, a venue liquidation. One-sided venue changes (a direct
-/// collateral supply or debt repay on a pod) are out of scope and may be treated as unrecoverable donations.
+/// (collateral + surplus, debt + floatingLeg), that is, a venue liquidation. A direct debt repay on a pod is out
+/// of scope and may be treated as an unrecoverable donation. One that retires the venue debt before a liquidation is
+/// rebased also zeroes bondRequirement, but stays unrecognized and cannot raise the refund.
+/// @dev Recognized repayment over the principal is floating interest the borrower's collateral paid. It nets
+/// against the fixed leg and the excess is refunded from the bond to the borrower's claimable, so the borrower does
+/// not pay both legs on the recognized portion. The borrower is credited at most the value of the collateral they
+/// lost. Repayment a seized surplus funded is not netted. Bond that cannot cover the excess is bad bond borne by the
+/// borrower. The rebase that zeroes bondRequirement nets like any other, a venue wipe included. A loan whose
+/// bondRequirement is already zero nets nothing.
+/// @dev Live collateral above the tracked collateral and surplus is a direct venue supply. Rebase tracks it as
+/// the borrower's collateral, so a withdrawal backed by it cannot pull tracked principal out of the surplus
+/// base or the liquidation seize cap.
 /// @dev Order is accrue, then rebase, then settle. Settlement runs on post-rebase (real venue) amounts, so the
 /// solver's claimable for net and surplus can never exceed what the pod can actually withdraw.
+/// @dev Legs accrue on the last synced collateral and debt, so after a venue liquidation they keep accruing
+/// on stale bases until rebase runs. The longer the delay, the further settlement drifts. Any resulting
+/// shift between borrower, solver, and bond is accepted.
 /// @dev A direct collateral supply to a pod's venue position (by anyone) raises venueCollateral, which can zero
-/// the liquidated term and make rebase skip even when a venue liquidation occurred. The donated collateral is
-/// recoverable by the borrower via escape.
+/// the liquidated term and make rebase skip a venue liquidation that occurred since the last sync.
 /// @dev After a venue liquidation, Iris recognizes venue debt reduction against the debt-token
 /// value of collateral lost since the last sync. A standard venue liquidation removes collateral
 /// worth the repaid debt plus liquidation bonus while reducing venue debt only by the repaid debt,
 /// so the liquidation-bonus buffer is the headroom for borrower direct venue repayment to be
 /// recognized by rebase. Extra one-sided venue repayment is outside rebase.
 /// @dev Rebase prices the lost collateral at the adapter's current oracle price, not at the price used
-/// by the venue liquidation. Large price moves between the venue liquidation and the rebase call can
-/// change how much debt reduction is recognized and whether bad debt is detected.
+/// by the venue liquidation. Large price moves between the venue liquidation and the rebase call can change how much
+/// debt reduction is recognized, how much paid floating is netted against the fixed leg and refunded from the bond,
+/// and whether bad debt is detected.
 /// @dev Debt that rebase does not recognize, from either cause above, leaves the stored debt above the real
 /// venue debt. At close the closer repays the stored amount while only the venue debt is forwarded to the
 /// venue, so the difference stays in Iris with no owner and counts as a donation.
 /// @dev Surplus can be greater than the venue collateral in an extreme case where most of the collateral got
 /// liquidated in the underlying venue. In such a case, the surplus shrinks to venue collateral.
-/// @dev If rebase detects bad debt, bondRequirement is set to zero. In that state,
-/// the solver can withdraw bond even when net is negative but does not receive
-/// surplus or fixed interest because the loan is not expected to be repaid.
+/// @dev A zero bondRequirement means the solver's bond obligation is over, not that the loan is resolved. the
+/// borrower may still owe the fixed leg and the pod may still hold the solver's surplus. Rebase zeroes it on bad debt,
+/// on the venue debt being fully retired (the signal is venue debt because a third party can add collateral to a pod
+/// but cannot borrow on it), or on a slash that exhausts the bond. From then on the solver can withdraw the bond even
+/// when net is negative and surplus stops accruing. fixed leg and surplus outstanding are settled by repay or
+/// liquidate, which stay callable while either remains. The loan is resolved once bondRequirement, debt, fixed leg
+/// and surplus are all zero, which is what escape requires.
+/// Surplus is forfeited only when the bond is gone (exhaustion, bond liquidation).
 /// @dev If a bad-debt loan is nonetheless closed via repay or liquidate, legs settle normally and the
 /// solver receives net and surplus, since the closer repays the debt and fixed interest in full.
 ///
@@ -142,6 +174,9 @@ import {IVenueAdapter} from "./interfaces/IVenueAdapter.sol";
 /// block. The IRM's approximate average rate can also dip the index on a long-unwritten, near-idle
 /// market. Whitelisting only blue-chip markets excludes that state. Hence the unchecked index deltas
 /// never underflow.
+/// @dev An idle Aave reserve with a nonzero base rate keeps growing its reported index while the stored index
+/// does not move until the first borrow, so a take on it snapshots a higher index than the one the pod's debt
+/// is minted at. Do not use Aave debt assets that can reach that state.
 ///
 /// TOKEN REQUIREMENTS
 /// @dev List of assumptions on the token that guarantees that the token behaves as expected:
@@ -196,7 +231,8 @@ contract Iris is IIris {
     mapping(uint256 lltv => bool) public isBondLltvEnabled;
     mapping(bytes32 data => bool) public isDataEnabled;
     mapping(address authorizer => mapping(address authorized => bool)) public isAuthorized;
-    mapping(address authorizer => mapping(uint256 nonce => bool)) public isNonceUsed;
+    mapping(address solver => mapping(uint256 nonce => bool)) public isQuoteNonceUsed;
+    mapping(address authorizer => uint256) public nonce;
     address public owner;
     address public feeRecipient;
     uint16 public fee;
@@ -296,7 +332,7 @@ contract Iris is IIris {
 
     function setAuthorizationWithSig(Authorization calldata authorization, bytes calldata signature) external {
         require(block.timestamp <= authorization.deadline, SignatureExpired());
-        require(!isNonceUsed[authorization.authorizer][authorization.nonce], InvalidNonce());
+        require(authorization.nonce == nonce[authorization.authorizer]++, InvalidNonce());
 
         bytes32 hashStruct = keccak256(abi.encode(AUTHORIZATION_TYPEHASH, authorization));
         bytes32 digest = keccak256(bytes.concat("\x19\x01", DOMAIN_SEPARATOR(), hashStruct));
@@ -307,7 +343,6 @@ contract Iris is IIris {
         );
 
         isAuthorized[authorization.authorizer][authorization.authorized] = authorization.isAuthorized;
-        isNonceUsed[authorization.authorizer][authorization.nonce] = true;
 
         emit EventsLib.SetNonce(msg.sender, authorization.authorizer, authorization.nonce);
         emit EventsLib.SetAuthorization(
@@ -329,7 +364,7 @@ contract Iris is IIris {
 
         require(_isSenderAuthorized(quote.borrower), Unauthorized());
         require(block.timestamp <= quote.deadline, QuoteExpired());
-        require(!isNonceUsed[quote.solver][quote.nonce], InvalidNonce());
+        require(!isQuoteNonceUsed[quote.solver][quote.nonce], InvalidNonce());
 
         bytes32 hashStruct = keccak256(
             abi.encode(
@@ -378,7 +413,7 @@ contract Iris is IIris {
         require(adapter != address(0), AdapterNotSet());
         require(isDataEnabled[keccak256(quote.data)], InvalidData());
 
-        isNonceUsed[quote.solver][quote.nonce] = true;
+        isQuoteNonceUsed[quote.solver][quote.nonce] = true;
 
         loan.borrower = quote.borrower;
         loan.solver = quote.solver;
@@ -430,7 +465,7 @@ contract Iris is IIris {
                 )
             );
 
-        emit EventsLib.SetNonce(msg.sender, quote.solver, quote.nonce);
+        emit EventsLib.SetQuoteNonce(msg.sender, quote.solver, quote.nonce);
         emit EventsLib.Take(msg.sender, pod, quote, collateralIndex, debtIndex);
 
         return pod;
@@ -441,7 +476,7 @@ contract Iris is IIris {
         Position storage pos = _position[pod];
 
         require(pos.lastUpdate != 0, LoanNotCreated());
-        require(pos.debt + pos.fixedLeg != 0 || pos.bondRequirement != 0, ZeroAmount());
+        require(pos.debt + pos.fixedLeg != 0 || pos.bondRequirement != 0 || pos.surplus != 0, ZeroAmount());
 
         _accrueLegs(loan, pos, pod);
         _rebase(loan, pos, pod);
@@ -490,7 +525,7 @@ contract Iris is IIris {
 
         require(receiver != address(0), ZeroAddress());
         require(pos.lastUpdate != 0, LoanNotCreated());
-        require(pos.debt + pos.fixedLeg != 0, ZeroAmount());
+        require(pos.debt + pos.fixedLeg != 0 || pos.bondRequirement != 0 || pos.surplus != 0, ZeroAmount());
         require(block.timestamp > loan.maturity + loan.overduePeriod, HealthyLoan());
 
         _accrueLegs(loan, pos, pod);
@@ -577,6 +612,7 @@ contract Iris is IIris {
         require(receiver != address(0), ZeroAddress());
         require(loan.collateralToken != address(0), ZeroAddress());
         require(_isSenderAuthorized(loan.borrower), Unauthorized());
+        require(block.timestamp <= loan.maturity + loan.overduePeriod, LiquidatableLoan());
 
         _accrueLegs(loan, pos, pod);
         _rebase(loan, pos, pod);
@@ -593,8 +629,9 @@ contract Iris is IIris {
                     * loan.overdueRate * BP,
                 SECONDS_PER_YEAR * WAD
             );
+        uint256 exposure = MathLib.max(pos.fixedLeg + residual, pos.floatingLeg.zeroFloorSub(pos.bond));
 
-        require(pos.debt + pos.fixedLeg + residual <= maxDebt, InsufficientCollateral());
+        require(pos.debt + exposure <= maxDebt, InsufficientCollateral());
 
         IPod(pod)
             .delegateCall(
@@ -634,7 +671,7 @@ contract Iris is IIris {
 
         pos.bond -= amount.toUint128();
 
-        require(_isHealthyBond(loan, pos), InsufficientBond());
+        require(pos.bond >= pos.bondRequirement && _isHealthyBond(loan, pos), InsufficientBond());
 
         loan.debtToken.safeTransfer(receiver, amount);
 
@@ -666,7 +703,6 @@ contract Iris is IIris {
         uint256 bondSlashed = MathLib.min(negativeNet + seized, pos.bond);
         uint256 repaid = MathLib.min(bondSlashed - seized, venueDebt);
 
-        pos.collateral = 0;
         pos.debt = 0;
         pos.bond -= bondSlashed.toUint128();
         pos.bondRequirement = 0;
@@ -689,7 +725,6 @@ contract Iris is IIris {
     /// @dev closing loan will set bondRequirement to 0
     function _isHealthyBond(Loan storage loan, Position storage pos) internal view returns (bool) {
         if (pos.bondRequirement == 0) return true;
-        if (pos.bond < pos.bondRequirement) return false;
         if (pos.floatingLeg <= pos.fixedLeg) return true;
 
         uint256 negativeNet = pos.floatingLeg - pos.fixedLeg;
@@ -770,7 +805,7 @@ contract Iris is IIris {
         require(receiver != address(0), ZeroAddress());
         require(pos.lastUpdate != 0, LoanNotCreated());
         require(_isSenderAuthorized(loan.borrower), Unauthorized());
-        require(pos.bondRequirement == 0, LoanNotResolved());
+        require(pos.bondRequirement == 0 && pos.debt + pos.fixedLeg + pos.surplus == 0, LoanNotResolved());
 
         (uint256 venueCollateral, uint256 venueDebt) =
             IVenueAdapter(venueAdapter[pos.venueId]).positionAssets(pod, loan.collateralToken, loan.debtToken, pos.data);
@@ -817,19 +852,46 @@ contract Iris is IIris {
         uint256 liquidated = (pos.collateral + pos.surplus).zeroFloorSub(venueCollateral);
         uint256 repaid = (pos.debt + pos.floatingLeg).zeroFloorSub(venueDebt);
 
-        if (liquidated == 0 || repaid == 0) return;
+        if (liquidated == 0 || repaid == 0) {
+            if (venueCollateral > pos.collateral + pos.surplus) {
+                pos.collateral = (venueCollateral - pos.surplus).toUint128();
+                emit EventsLib.Rebase(
+                    msg.sender, pod, pos.collateral, pos.debt, pos.fixedLeg, pos.bond, venueCollateral, venueDebt, 0
+                );
+            }
+            return;
+        }
 
         uint256 collateralPrice = IVenueAdapter(adapter).price(loan.collateralToken, loan.debtToken, pos.data);
         uint256 maxRepaid = liquidated.mulDivDown(collateralPrice, ORACLE_PRICE_SCALE);
         uint256 badDebt = venueDebt.zeroFloorSub(venueCollateral.mulDivDown(collateralPrice, ORACLE_PRICE_SCALE));
+        repaid = MathLib.min(repaid, maxRepaid);
+
+        uint256 borrowerRepaid = MathLib.min(
+            repaid, MathLib.min(liquidated, pos.collateral).mulDivDown(collateralPrice, ORACLE_PRICE_SCALE)
+        );
+        uint256 overpaid = pos.bondRequirement == 0 ? 0 : borrowerRepaid.zeroFloorSub(pos.debt);
+        uint256 bondSlashed = MathLib.min(overpaid.zeroFloorSub(pos.fixedLeg), pos.bond);
 
         if (venueCollateral <= pos.surplus) pos.surplus = venueCollateral.toUint128();
         if (venueDebt <= pos.floatingLeg) pos.floatingLeg = venueDebt.toUint128();
-        if (badDebt != 0 || (venueDebt == 0 && venueCollateral == 0)) pos.bondRequirement = 0;
-        pos.collateral = pos.collateral.zeroFloorSub(liquidated).toUint128();
-        pos.debt = pos.debt.zeroFloorSub(MathLib.min(repaid, maxRepaid)).toUint128();
+        if (badDebt != 0 || venueDebt == 0) pos.bondRequirement = 0;
 
-        emit EventsLib.Rebase(msg.sender, pod, pos.collateral, pos.debt, venueCollateral, venueDebt, badDebt);
+        pos.collateral = pos.collateral.zeroFloorSub(liquidated).toUint128();
+        pos.debt = pos.debt.zeroFloorSub(repaid).toUint128();
+        if (overpaid != 0) pos.fixedLeg = pos.fixedLeg.zeroFloorSub(overpaid).toUint128();
+        if (bondSlashed != 0) {
+            pos.bond -= bondSlashed.toUint128();
+            _claimable(loan.debtToken, bondSlashed, loan.borrower);
+            if (pos.bond == 0) {
+                pos.bondRequirement = 0;
+                pos.surplus = 0;
+            }
+        }
+
+        emit EventsLib.Rebase(
+            msg.sender, pod, pos.collateral, pos.debt, pos.fixedLeg, pos.bond, venueCollateral, venueDebt, badDebt
+        );
     }
 
     /* INTEREST FUNCTIONS */

@@ -158,7 +158,7 @@ contract IrisAdapterUnitTest is PeripheryUnitTest {
         // Withdrawable under the health check: lltv 0.8 and price 1 leave collateral - debt / 0.8 headroom.
         uint256 amount = MIN_TEST_AMOUNT / 2;
 
-        bundle.push(_irisSetAuthorizationWithSig(borrowerPk, true, 1, false));
+        bundle.push(_irisSetAuthorizationWithSig(borrowerPk, true, 0, false));
         bundle.push(_irisWithdrawCollateral(pod, amount, RECEIVER));
 
         vm.prank(borrower);
@@ -233,7 +233,7 @@ contract IrisAdapterUnitTest is PeripheryUnitTest {
         uint256 amount = bond / 4;
 
         // The solver's nonce 0 was consumed by the quote.
-        bundle.push(_irisSetAuthorizationWithSig(solverPk, true, 1, false));
+        bundle.push(_irisSetAuthorizationWithSig(solverPk, true, 0, false));
         bundle.push(_irisWithdrawBond(pod, amount, RECEIVER));
 
         vm.prank(solver);
@@ -266,7 +266,7 @@ contract IrisAdapterUnitTest is PeripheryUnitTest {
         debtToken.safeApprove(address(generalAdapter1), type(uint256).max);
 
         // The solver's nonce 0 was consumed by the quote.
-        bundle.push(_irisSetAuthorizationWithSig(solverPk, true, 1, false));
+        bundle.push(_irisSetAuthorizationWithSig(solverPk, true, 0, false));
         bundle.push(_erc20TransferFrom(debtToken, debt));
         bundle.push(_irisRefinance(pod, RECEIVER, 1, newData));
 
@@ -294,12 +294,13 @@ contract IrisAdapterUnitTest is PeripheryUnitTest {
         (collateral, debt, bond) = _boundQuoteAmounts(collateral, debt, bond);
         (address pod,) = _openLoan(collateral, debt, bond);
 
-        // A resolved loan (zero bond requirement) is escapable by the borrower.
+        // A resolved and settled loan (zero bond requirement, nothing outstanding) is escapable by the borrower.
         StorageUtils.setPositionBondRequirement(address(iris), pod, 0);
+        StorageUtils.setPositionDebt(address(iris), pod, 0);
 
         deal(debtToken, borrower, debt);
 
-        bundle.push(_irisSetAuthorizationWithSig(borrowerPk, true, 1, false));
+        bundle.push(_irisSetAuthorizationWithSig(borrowerPk, true, 0, false));
         bundle.push(_erc20TransferFrom(debtToken, debt));
         bundle.push(_irisEscape(pod, RECEIVER));
 

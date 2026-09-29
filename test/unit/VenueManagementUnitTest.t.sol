@@ -134,14 +134,29 @@ contract VenueManagementUnitTest is UnitTest {
         iris.escape(pod, receiver);
         StorageUtils.setPositionBondRequirement(address(iris), pod, 0);
 
-        // Normal path
+        // Loan not settled: tracked debt, fixed leg or surplus still outstanding blocks escape (repay or liquidate
+        // settles them).
         StorageUtils.setLoanCollateralToken(address(iris), pod, collateralToken);
         StorageUtils.setLoanDebtToken(address(iris), pod, debtToken);
+        StorageUtils.setPositionDebt(address(iris), pod, 1);
+        vm.expectRevert(IIris.LoanNotResolved.selector);
+        vm.prank(borrower);
+        iris.escape(pod, receiver);
+        StorageUtils.setPositionDebt(address(iris), pod, 0);
         StorageUtils.setPositionFixedLeg(address(iris), pod, 1);
-        StorageUtils.setPositionFloatingLeg(address(iris), pod, 1);
+        vm.expectRevert(IIris.LoanNotResolved.selector);
+        vm.prank(borrower);
+        iris.escape(pod, receiver);
+        StorageUtils.setPositionFixedLeg(address(iris), pod, 0);
         StorageUtils.setPositionSurplus(address(iris), pod, 1);
+        vm.expectRevert(IIris.LoanNotResolved.selector);
+        vm.prank(borrower);
+        iris.escape(pod, receiver);
+        StorageUtils.setPositionSurplus(address(iris), pod, 0);
+
+        // Normal path
+        StorageUtils.setPositionFloatingLeg(address(iris), pod, 1);
         StorageUtils.setPositionCollateral(address(iris), pod, uint128(venueCollateral));
-        StorageUtils.setPositionDebt(address(iris), pod, uint128(venueDebt));
         StorageUtils.setPositionBond(address(iris), pod, 1);
         VenueAdapterMock(address(venueAdapter)).setPosition(venueCollateral, venueDebt);
         deal(debtToken, borrower, venueDebt);
@@ -173,10 +188,15 @@ contract VenueManagementUnitTest is UnitTest {
 
     /// @dev Stored indices match the venue's so accrual contributes nothing and the rebase logic is
     /// isolated. Price is fuzzed so the bad-debt collateral quoting (the price scaling) is exercised.
+    /// Legs and bond are fuzzed so the venue debt can fall below the accrued floating leg. the repayment recognized
+    /// above the principal nets the fixed leg and the excess is slashed from the bond into the borrower's claimable.
     function testRebase(
         uint256 blocks,
         uint256 collateral,
         uint256 debt,
+        uint256 fixedLeg,
+        uint256 floatingLeg,
+        uint256 bond,
         uint256 venueCollateral,
         uint256 venueDebt,
         uint256 price
@@ -184,8 +204,11 @@ contract VenueManagementUnitTest is UnitTest {
         blocks = bound(blocks, 1, type(uint32).max - block.timestamp - 1);
         collateral = bound(collateral, MIN_TEST_AMOUNT, MAX_TEST_AMOUNT);
         debt = bound(debt, MIN_TEST_AMOUNT, MAX_TEST_AMOUNT);
+        fixedLeg = bound(fixedLeg, 0, MAX_TEST_AMOUNT);
+        floatingLeg = bound(floatingLeg, 0, MAX_TEST_AMOUNT);
+        bond = bound(bond, 1, MAX_TEST_AMOUNT);
         venueCollateral = bound(venueCollateral, 0, collateral - 1);
-        venueDebt = bound(venueDebt, 0, debt - 1);
+        venueDebt = bound(venueDebt, 0, debt + floatingLeg - 1);
         price = bound(price, MIN_TEST_COLLATERAL_PRICE, MAX_TEST_COLLATERAL_PRICE);
 
         // Loan not created
@@ -201,9 +224,14 @@ contract VenueManagementUnitTest is UnitTest {
         StorageUtils.setPositionBondRequirement(address(iris), pod, 1);
 
         // Early return or Normal path
+        StorageUtils.setLoanBorrower(address(iris), pod, borrower);
+        StorageUtils.setLoanDebtToken(address(iris), pod, debtToken);
         StorageUtils.setPositionLastUpdate(address(iris), pod, uint32(block.timestamp));
         StorageUtils.setPositionCollateral(address(iris), pod, uint128(collateral));
         StorageUtils.setPositionDebt(address(iris), pod, uint128(debt));
+        StorageUtils.setPositionFixedLeg(address(iris), pod, uint128(fixedLeg));
+        StorageUtils.setPositionFloatingLeg(address(iris), pod, uint128(floatingLeg));
+        StorageUtils.setPositionBond(address(iris), pod, uint128(bond));
         StorageUtils.setPositionCollateralIndex(address(iris), pod, uint128(1e27));
         StorageUtils.setPositionDebtIndex(address(iris), pod, uint128(1e27));
         VenueAdapterMock(address(venueAdapter)).setIndices(1e27, 1e27);
@@ -212,7 +240,7 @@ contract VenueManagementUnitTest is UnitTest {
         _forward(blocks);
 
         // Already rebased - only the venue collateral fell below expected (one-sided change is ignored)
-        VenueAdapterMock(address(venueAdapter)).setPosition(venueCollateral, debt);
+        VenueAdapterMock(address(venueAdapter)).setPosition(venueCollateral, debt + floatingLeg);
         iris.rebase(pod);
         assertEq(iris.getPosition(pod).collateral, collateral);
 
@@ -220,26 +248,52 @@ contract VenueManagementUnitTest is UnitTest {
         VenueAdapterMock(address(venueAdapter)).setPosition(collateral, venueDebt);
         iris.rebase(pod);
         assertEq(iris.getPosition(pod).debt, debt);
+        assertEq(iris.getPosition(pod).fixedLeg, fixedLeg);
 
         // Normal path - both venue collateral and venue debt fell below expected
         VenueAdapterMock(address(venueAdapter)).setPosition(venueCollateral, venueDebt);
         uint256 liquidated = collateral - venueCollateral;
-        uint256 repaid = debt - venueDebt;
-        uint256 expectedCollateral = collateral.zeroFloorSub(liquidated);
-        uint256 expectedDebt = debt.zeroFloorSub(MathLib.min(repaid, liquidated.mulDivDown(price, ORACLE_PRICE_SCALE)));
+        uint256 repaid = MathLib.min(debt + floatingLeg - venueDebt, liquidated.mulDivDown(price, ORACLE_PRICE_SCALE));
         uint256 badDebt = venueDebt.zeroFloorSub(venueCollateral.mulDivDown(price, ORACLE_PRICE_SCALE));
+
+        bool resolved = badDebt != 0 || venueDebt == 0;
+        // The repayment recognized above the principal is floating interest the collateral paid: it nets the fixed
+        // leg first and the excess is slashed from the bond into the borrower's claimable.
+        uint256 overpaid = repaid.zeroFloorSub(debt);
+        uint256 bondSlashed = MathLib.min(overpaid.zeroFloorSub(fixedLeg), bond);
+        uint256 expectedCollateral = collateral.zeroFloorSub(liquidated);
+        uint256 expectedDebt = debt.zeroFloorSub(repaid);
+        uint256 expectedBond = bond - bondSlashed;
+
+        if (bondSlashed != 0) {
+            vm.expectEmit();
+            emit EventsLib.Claimable(debtToken, borrower, bondSlashed);
+        }
         vm.expectEmit();
-        emit EventsLib.Rebase(borrower, pod, expectedCollateral, expectedDebt, venueCollateral, venueDebt, badDebt);
+        emit EventsLib.Rebase(
+            borrower,
+            pod,
+            expectedCollateral,
+            expectedDebt,
+            fixedLeg.zeroFloorSub(overpaid),
+            expectedBond,
+            venueCollateral,
+            venueDebt,
+            badDebt
+        );
         vm.prank(borrower);
         iris.rebase(pod);
 
         Position memory pos = iris.getPosition(pod);
         assertEq(pos.collateral, expectedCollateral);
         assertEq(pos.debt, expectedDebt);
+        assertEq(pos.fixedLeg, fixedLeg.zeroFloorSub(overpaid));
+        assertEq(pos.floatingLeg, MathLib.min(floatingLeg, venueDebt));
+        assertEq(pos.bond, expectedBond);
         assertEq(pos.lastUpdate, block.timestamp);
-        // Bad debt (or a fully liquidated venue position) resolves the loan by zeroing bondRequirement.
-        uint256 expectedBondRequirement = (badDebt != 0 || (venueDebt == 0 && venueCollateral == 0)) ? 0 : 1;
-        assertEq(pos.bondRequirement, expectedBondRequirement);
+        assertEq(iris.claimable(debtToken, borrower), bondSlashed);
+        // A slash that exhausts the bond resolves the loan like a bond liquidation would.
+        assertEq(pos.bondRequirement, resolved || expectedBond == 0 ? 0 : 1);
     }
 
     /// @dev REBASE: "Surplus can be greater than the venue collateral ... the surplus shrinks to venue
@@ -264,7 +318,7 @@ contract VenueManagementUnitTest is UnitTest {
 
         vm.expectEmit();
         emit EventsLib.Rebase(
-            address(this), pod, 0, 0, venueCollateral, venueDebt, venueDebt.zeroFloorSub(venueCollateral)
+            address(this), pod, 0, 0, 0, 0, venueCollateral, venueDebt, venueDebt.zeroFloorSub(venueCollateral)
         );
         iris.rebase(pod);
 
@@ -279,25 +333,254 @@ contract VenueManagementUnitTest is UnitTest {
         assertEq(pos.bondRequirement, 0);
     }
 
-    /// @dev REBASE: a fully liquidated venue position (zero collateral and zero debt) marks the loan
-    /// resolved by zeroing bondRequirement, which is what later lets the borrower escape.
-    function testRebaseFullLiquidationZeroesBondRequirement() public {
-        StorageUtils.setPositionLastUpdate(address(iris), pod, uint32(block.timestamp));
-        StorageUtils.setPositionBondRequirement(address(iris), pod, 1);
-        StorageUtils.setPositionCollateral(address(iris), pod, 1e18);
-        StorageUtils.setPositionDebt(address(iris), pod, 1e18);
-        StorageUtils.setPositionCollateralIndex(address(iris), pod, uint128(1e27));
-        StorageUtils.setPositionDebtIndex(address(iris), pod, uint128(1e27));
-        VenueAdapterMock(address(venueAdapter)).setIndices(1e27, 1e27);
-        VenueAdapterMock(address(venueAdapter)).setPosition(0, 0);
+    /// @dev REBASE: a venue wipe (zero collateral and zero debt) resolves the loan by zeroing bondRequirement and
+    /// nets like any other liquidation: the 2e18 liquidated at par recognizes the 0.1e18 above the principal, which
+    /// nets the 0.05e18 fixed leg and slashes the 0.05e18 excess from the bond into the borrower's claimable. With
+    /// nothing outstanding the borrower escapes, the solver withdraws the rest of the bond, and nothing can
+    /// liquidate it.
+    function testRebaseWipeNetsAndResolves() public {
+        uint256 collateral = 2e18;
+        uint256 debt = 1e18;
+        uint256 fixedLeg = 0.05e18;
+        uint256 floatingLeg = 0.1e18;
+        uint256 bond = 0.1e18;
+        uint256 bondRequirement = 1;
+        uint256 venueCollateral = 0;
+        uint256 venueDebt = 0;
+        uint256 bondSlashed = floatingLeg - fixedLeg;
+
+        _setupRebaseState(collateral, debt, fixedLeg, floatingLeg, bond, bondRequirement, venueCollateral, venueDebt);
+        deal(debtToken, address(iris), bond);
 
         vm.expectEmit();
-        emit EventsLib.Rebase(address(this), pod, 0, 0, 0, 0, 0);
+        emit EventsLib.Claimable(debtToken, borrower, bondSlashed);
+        vm.expectEmit();
+        emit EventsLib.Rebase(address(this), pod, 0, 0, 0, bond - bondSlashed, 0, 0, 0);
         iris.rebase(pod);
 
         Position memory pos = iris.getPosition(pod);
         assertEq(pos.collateral, 0);
         assertEq(pos.debt, 0);
+        assertEq(pos.fixedLeg, 0);
+        assertEq(pos.floatingLeg, 0);
+        assertEq(pos.bond, bond - bondSlashed);
         assertEq(pos.bondRequirement, 0);
+        assertEq(iris.claimable(debtToken, borrower), bondSlashed);
+
+        vm.expectRevert(IIris.ZeroAmount.selector);
+        iris.liquidateBond(pod, receiver);
+        vm.prank(borrower);
+        iris.escape(pod, receiver);
+        vm.prank(solver);
+        iris.withdrawBond(pod, bond - bondSlashed, receiver);
+        assertEq(debtToken.balanceOf(receiver), bond - bondSlashed);
+    }
+
+    /// @dev REBASE, collateral supplied on the pod's behalf after a wipe changes neither the
+    /// netting nor the resolution. The wipe read as (1 wei, 0) resolves and refunds exactly like the (0, 0) read
+    /// above; the dust is tracked as the borrower's collateral.
+    function testRebaseWipeIgnoresDustSupply() public {
+        uint256 collateral = 2e18;
+        uint256 debt = 1e18;
+        uint256 fixedLeg = 0.05e18;
+        uint256 floatingLeg = 0.1e18;
+        uint256 bond = 0.1e18;
+        uint256 bondRequirement = 1;
+        uint256 venueCollateral = 1;
+        uint256 venueDebt = 0;
+        uint256 bondSlashed = floatingLeg - fixedLeg;
+
+        _setupRebaseState(collateral, debt, fixedLeg, floatingLeg, bond, bondRequirement, venueCollateral, venueDebt);
+        deal(debtToken, address(iris), bond);
+
+        vm.expectEmit();
+        emit EventsLib.Claimable(debtToken, borrower, bondSlashed);
+        vm.expectEmit();
+        emit EventsLib.Rebase(address(this), pod, 1, 0, 0, bond - bondSlashed, 1, 0, 0);
+        iris.rebase(pod);
+
+        Position memory pos = iris.getPosition(pod);
+        assertEq(pos.collateral, 1);
+        assertEq(pos.debt, 0);
+        assertEq(pos.fixedLeg, 0);
+        assertEq(pos.floatingLeg, 0);
+        assertEq(pos.bond, bond - bondSlashed);
+        assertEq(pos.bondRequirement, 0);
+        assertEq(iris.claimable(debtToken, borrower), bondSlashed);
+
+        vm.expectRevert(IIris.ZeroAmount.selector);
+        iris.liquidateBond(pod, receiver);
+        vm.prank(borrower);
+        iris.escape(pod, receiver);
+        vm.prank(solver);
+        iris.withdrawBond(pod, bond - bondSlashed, receiver);
+        assertEq(debtToken.balanceOf(receiver), bond - bondSlashed);
+    }
+
+    /// @dev REBASE: the repayment recognized above the principal nets the fixed leg first and only the excess is
+    /// slashed from the bond into the borrower's claimable.
+    ///
+    /// debt 100, floating 10, fixed 5, bond 8.
+    /// A venue liquidation that retires the whole venue debt nets the fixed leg to zero, slashes 5, and resolves the
+    /// loan since no venue debt is left: the solver withdraws the remaining bond below the old requirement, nothing
+    /// can liquidate it, and the borrower takes the leftover collateral out with escape.
+    function testRebaseSlashesBondAfterNettingFixedLeg() public {
+        uint256 collateral = 200e18;
+        uint256 debt = 100e18;
+        uint256 fixedLeg = 5e18;
+        uint256 floatingLeg = 10e18;
+        uint256 bond = 8e18;
+        uint256 bondRequirement = 4e18;
+        uint256 venueCollateral = 85e18; // 115e18 liquidated covers the 110e18 venue debt at par
+        uint256 venueDebt = 0;
+        uint256 bondSlashed = floatingLeg - fixedLeg;
+
+        _setupRebaseState(collateral, debt, fixedLeg, floatingLeg, bond, bondRequirement, venueCollateral, venueDebt);
+        deal(debtToken, address(iris), bond);
+
+        vm.expectEmit();
+        emit EventsLib.Claimable(debtToken, borrower, bondSlashed);
+        vm.expectEmit();
+        emit EventsLib.Rebase(address(this), pod, venueCollateral, 0, 0, bond - bondSlashed, venueCollateral, 0, 0);
+        iris.rebase(pod);
+
+        Position memory pos = iris.getPosition(pod);
+        assertEq(pos.collateral, venueCollateral);
+        assertEq(pos.debt, 0);
+        assertEq(pos.fixedLeg, 0);
+        assertEq(pos.floatingLeg, 0);
+        assertEq(pos.bond, bond - bondSlashed);
+        assertEq(pos.bondRequirement, 0);
+        assertEq(iris.claimable(debtToken, borrower), bondSlashed);
+
+        // Resolved: bond liquidation is shut, the solver withdraws below the old requirement, and with nothing
+        // outstanding the borrower escapes with the leftover collateral.
+        vm.expectRevert(IIris.ZeroAmount.selector);
+        iris.liquidateBond(pod, receiver);
+        vm.prank(solver);
+        iris.withdrawBond(pod, bond - bondSlashed, receiver);
+        assertEq(debtToken.balanceOf(receiver), bond - bondSlashed);
+        vm.expectEmit();
+        emit EventsLib.Escape(borrower, pod, receiver, venueCollateral, 0);
+        vm.prank(borrower);
+        iris.escape(pod, receiver);
+    }
+
+    /// @dev REBASE: a slash that exhausts the bond resolves the loan like a bond liquidation would. The excess the
+    /// bond cannot cover is bad bond borne by the borrower, so the claimable is capped at the bond. With debt, legs
+    /// and bondRequirement all zero, every close path is shut and only escape (and the claim) remain.
+    function testRebaseExhaustsBondAndResolves() public {
+        uint256 collateral = 200e18;
+        uint256 debt = 100e18;
+        uint256 fixedLeg = 5e18;
+        uint256 floatingLeg = 10e18;
+        uint256 bond = 3e18; // below the 5e18 excess
+        uint256 bondRequirement = 4e18;
+        uint256 venueCollateral = 85e18;
+        uint256 venueDebt = 0;
+
+        _setupRebaseState(collateral, debt, fixedLeg, floatingLeg, bond, bondRequirement, venueCollateral, venueDebt);
+        deal(debtToken, address(iris), bond);
+
+        vm.expectEmit();
+        emit EventsLib.Claimable(debtToken, borrower, bond);
+        vm.expectEmit();
+        emit EventsLib.Rebase(address(this), pod, venueCollateral, 0, 0, 0, venueCollateral, 0, 0);
+        iris.rebase(pod);
+
+        Position memory pos = iris.getPosition(pod);
+        assertEq(pos.collateral, venueCollateral);
+        assertEq(pos.debt, 0);
+        assertEq(pos.fixedLeg, 0);
+        assertEq(pos.floatingLeg, 0);
+        assertEq(pos.bond, 0);
+        assertEq(pos.bondRequirement, 0);
+        assertEq(iris.claimable(debtToken, borrower), bond);
+
+        vm.expectRevert(IIris.ZeroAmount.selector);
+        iris.rebase(pod);
+        vm.expectRevert(IIris.ZeroAmount.selector);
+        iris.repay(pod);
+        vm.expectRevert(IIris.ZeroAmount.selector);
+        iris.liquidate(pod, receiver);
+        vm.expectRevert(IIris.ZeroAmount.selector);
+        iris.liquidateBond(pod, receiver);
+
+        vm.startPrank(borrower);
+        iris.claim(debtToken, bond, borrower, receiver);
+        vm.expectEmit();
+        emit EventsLib.Escape(borrower, pod, receiver, venueCollateral, 0);
+        iris.escape(pod, receiver);
+        vm.stopPrank();
+
+        assertEq(debtToken.balanceOf(receiver), bond);
+        assertEq(iris.getPosition(pod).collateral, 0);
+    }
+
+    /// @dev REBASE: a resolved loan nets nothing, even when a later rebase recognizes a repayment above the
+    /// principal. `rebase` itself is shut on a resolved loan, so the rebase runs through `withdrawBond`, which
+    /// the solver may call on a resolved loan whatever the net.
+    function testRebaseResolvedLoanNetsNothing() public {
+        uint256 collateral = 100e18;
+        uint256 debt = 0;
+        uint256 fixedLeg = 20e18;
+        uint256 floatingLeg = 100e18;
+        uint256 bond = 5e18;
+        uint256 bondRequirement = 0;
+        uint256 venueCollateral = 50e18;
+        uint256 venueDebt = 40e18; // no bad debt at par
+
+        // Resolved earlier (bondRequirement 0) with the principal already retired.
+        _setupRebaseState(collateral, debt, fixedLeg, floatingLeg, bond, bondRequirement, venueCollateral, venueDebt);
+        deal(debtToken, address(iris), bond);
+
+        vm.expectEmit();
+        emit EventsLib.Rebase(solver, pod, venueCollateral, 0, fixedLeg, bond, venueCollateral, venueDebt, 0);
+        vm.expectEmit();
+        emit EventsLib.WithdrawBond(solver, pod, receiver, bond);
+        vm.prank(solver);
+        iris.withdrawBond(pod, bond, receiver);
+
+        Position memory pos = iris.getPosition(pod);
+        assertEq(pos.collateral, venueCollateral);
+        assertEq(pos.debt, 0);
+        // The 50e18 recognized above the zero principal is not netted: the fixed leg is untouched and the whole
+        // bond is still withdrawable, which a slash would have made underflow.
+        assertEq(pos.fixedLeg, fixedLeg);
+        assertEq(pos.floatingLeg, venueDebt);
+        assertEq(pos.bond, 0);
+        assertEq(debtToken.balanceOf(receiver), bond);
+        assertEq(pos.bondRequirement, 0);
+        assertEq(iris.claimable(debtToken, borrower), 0);
+    }
+
+    /* HELPERS */
+
+    /// @dev Stored indices match the venue's so accrual contributes nothing; the price is par.
+    function _setupRebaseState(
+        uint256 collateral,
+        uint256 debt,
+        uint256 fixedLeg,
+        uint256 floatingLeg,
+        uint256 bond,
+        uint256 bondRequirement,
+        uint256 venueCollateral,
+        uint256 venueDebt
+    ) internal {
+        StorageUtils.setLoanBorrower(address(iris), pod, borrower);
+        StorageUtils.setLoanSolver(address(iris), pod, solver);
+        StorageUtils.setLoanCollateralToken(address(iris), pod, collateralToken);
+        StorageUtils.setLoanDebtToken(address(iris), pod, debtToken);
+        StorageUtils.setPositionLastUpdate(address(iris), pod, uint32(block.timestamp));
+        StorageUtils.setPositionBondRequirement(address(iris), pod, uint128(bondRequirement));
+        StorageUtils.setPositionCollateral(address(iris), pod, uint128(collateral));
+        StorageUtils.setPositionDebt(address(iris), pod, uint128(debt));
+        StorageUtils.setPositionFixedLeg(address(iris), pod, uint128(fixedLeg));
+        StorageUtils.setPositionFloatingLeg(address(iris), pod, uint128(floatingLeg));
+        StorageUtils.setPositionBond(address(iris), pod, uint128(bond));
+        StorageUtils.setPositionCollateralIndex(address(iris), pod, uint128(1e27));
+        StorageUtils.setPositionDebtIndex(address(iris), pod, uint128(1e27));
+        VenueAdapterMock(address(venueAdapter)).setIndices(1e27, 1e27);
+        VenueAdapterMock(address(venueAdapter)).setPosition(venueCollateral, venueDebt);
     }
 }

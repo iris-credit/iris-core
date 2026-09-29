@@ -178,7 +178,7 @@ contract IrisAdapterForkTest is PeripheryForkTest {
         quote.debtToken.safeApprove(address(generalAdapter1), venueDebt);
 
         // The solver's nonce 0 was consumed by the quote.
-        bundle.push(_irisSetAuthorizationWithSig(solverPk, true, 1, false));
+        bundle.push(_irisSetAuthorizationWithSig(solverPk, true, 0, false));
         bundle.push(_erc20TransferFrom(quote.debtToken, venueDebt));
         bundle.push(_irisRefinance(pod, solver, uint256(VenueId.MORPHO_BLUE), morphoData));
 
@@ -202,7 +202,7 @@ contract IrisAdapterForkTest is PeripheryForkTest {
         callbackBundle.push(_irisRefinance(pod, address(generalAdapter1), uint256(VenueId.MORPHO_BLUE), morphoData));
 
         // The solver's nonce 0 was consumed by the quote.
-        bundle.push(_irisSetAuthorizationWithSig(solverPk, true, 1, false));
+        bundle.push(_irisSetAuthorizationWithSig(solverPk, true, 0, false));
         bundle.push(_morphoFlashLoan(quote.debtToken, venueDebt));
 
         vm.prank(solver);
@@ -217,8 +217,9 @@ contract IrisAdapterForkTest is PeripheryForkTest {
         Quote memory quote = _buildAaveV3Quote(collateral, debt);
         address pod = _openLoan(quote);
 
-        // A resolved loan (zero bond requirement) is escapable by the borrower.
+        // A resolved and settled loan (zero bond requirement, nothing outstanding) is escapable by the borrower.
         StorageUtils.setPositionBondRequirement(address(iris), pod, 0);
+        StorageUtils.setPositionDebt(address(iris), pod, 0);
 
         (uint256 venueCollateral, uint256 venueDebt) =
             aaveV3Adapter.positionAssets(pod, quote.collateralToken, quote.debtToken, quote.data);

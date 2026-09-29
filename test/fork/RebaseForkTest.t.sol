@@ -45,7 +45,7 @@ contract RebaseForkTest is ForkTest {
         assertEq(newPos.bondRequirement, pos.bondRequirement);
     }
 
-    // External collateral supply is a donation. rebase no-ops.
+    // External collateral supply is synced into the borrower's collateral.
     // (venue collateral > position collateral + surplus)
     function testRebaseExternalSupplyCollateral(
         uint256 collateral,
@@ -75,8 +75,12 @@ contract RebaseForkTest is ForkTest {
 
         iris.rebase(pod);
 
+        // The direct supply is tracked as the borrower's collateral.
+        (uint256 venueCollateral,) =
+            IVenueAdapter(iris.venueAdapter(venueId)).positionAssets(pod, collateralToken, debtToken, data);
         Position memory newPos = iris.getPosition(pod);
-        assertEq(newPos.collateral, pos.collateral);
+        assertEq(newPos.collateral, venueCollateral - newPos.surplus);
+        assertGe(newPos.collateral, pos.collateral);
         assertEq(newPos.debt, pos.debt);
         assertEq(newPos.bondRequirement, pos.bondRequirement);
     }
@@ -152,7 +156,17 @@ contract RebaseForkTest is ForkTest {
         uint256 expectedDebt = uint256(pos.debt).zeroFloorSub(maxRepaid);
 
         vm.expectEmit();
-        emit EventsLib.Rebase(address(this), pod, newVenueCollateral, expectedDebt, newVenueCollateral, newVenueDebt, 0);
+        emit EventsLib.Rebase(
+            address(this),
+            pod,
+            newVenueCollateral,
+            expectedDebt,
+            pos.fixedLeg,
+            pos.bond,
+            newVenueCollateral,
+            newVenueDebt,
+            0
+        );
         iris.rebase(pod);
 
         Position memory newPos = iris.getPosition(pod);
@@ -205,7 +219,17 @@ contract RebaseForkTest is ForkTest {
             uint256(pos.debt).zeroFloorSub(MathLib.min(repaid, liquidated.mulDivDown(price, ORACLE_PRICE_SCALE)));
 
         vm.expectEmit();
-        emit EventsLib.Rebase(borrower, pod, remainingCollateral, expectedDebt, remainingCollateral, remainingDebt, 0);
+        emit EventsLib.Rebase(
+            borrower,
+            pod,
+            remainingCollateral,
+            expectedDebt,
+            pos.fixedLeg,
+            pos.bond,
+            remainingCollateral,
+            remainingDebt,
+            0
+        );
         vm.prank(borrower);
         iris.rebase(pod);
 
@@ -215,7 +239,7 @@ contract RebaseForkTest is ForkTest {
         assertEq(newPos.bondRequirement, pos.bondRequirement);
     }
 
-    // Liquidation to zero venue debt but collateral remains. bondRequirement is kept.
+    // Liquidation to zero venue debt but collateral remains. No venue debt left resolves the loan.
     function testRebaseVenueFullLiquidation(
         uint256 collateral,
         uint256 debt,
@@ -247,14 +271,16 @@ contract RebaseForkTest is ForkTest {
             .zeroFloorSub(MathLib.min(uint256(pos.debt), liquidated.mulDivDown(price, ORACLE_PRICE_SCALE)));
 
         vm.expectEmit();
-        emit EventsLib.Rebase(borrower, pod, remainingCollateral, expectedDebt, remainingCollateral, 0, 0);
+        emit EventsLib.Rebase(
+            borrower, pod, remainingCollateral, expectedDebt, pos.fixedLeg, pos.bond, remainingCollateral, 0, 0
+        );
         vm.prank(borrower);
         iris.rebase(pod);
 
         Position memory newPos = iris.getPosition(pod);
         assertEq(newPos.collateral, remainingCollateral);
         assertEq(newPos.debt, expectedDebt);
-        assertEq(newPos.bondRequirement, pos.bondRequirement);
+        assertEq(newPos.bondRequirement, 0);
     }
 
     // Liquidation to zero venue position (zero collateral, debt) resolves the loan.
@@ -282,7 +308,7 @@ contract RebaseForkTest is ForkTest {
         _mockPositionAssets(adapter, pod, collateralToken, debtToken, data, 0, 0);
 
         vm.expectEmit();
-        emit EventsLib.Rebase(borrower, pod, 0, 0, 0, 0, 0);
+        emit EventsLib.Rebase(borrower, pod, 0, 0, pos.fixedLeg, pos.bond, 0, 0, 0);
         vm.prank(borrower);
         iris.rebase(pod);
 
@@ -330,7 +356,15 @@ contract RebaseForkTest is ForkTest {
 
         vm.expectEmit();
         emit EventsLib.Rebase(
-            borrower, pod, remainingCollateral, expectedDebt, remainingCollateral, remainingDebt, badDebt
+            borrower,
+            pod,
+            remainingCollateral,
+            expectedDebt,
+            pos.fixedLeg,
+            pos.bond,
+            remainingCollateral,
+            remainingDebt,
+            badDebt
         );
         vm.prank(borrower);
         iris.rebase(pod);
@@ -341,7 +375,79 @@ contract RebaseForkTest is ForkTest {
         assertEq(newPos.bondRequirement, 0);
     }
 
-    // External supply collateral with venue debt reduction(external repay or liquidated). rebase no-ops.
+    // A venue liquidation that repays the accrued floating leg on top of the tracked principal nets the fixed leg
+    // by the excess and slashes what the fixed leg cannot absorb from the bond into the borrower's claimable.
+    function testRebaseVenueLiquidationNetsAccruedFloating(
+        uint256 collateral,
+        uint256 debt,
+        uint256 blocks,
+        uint256 remainingCollateral,
+        uint256 seed,
+        uint256 venueId
+    ) public {
+        blocks = bound(blocks, 1, MIN_DURATION / BLOCK_TIME);
+        venueId = bound(venueId, 0, uint256(type(VenueId).max));
+
+        (address collateralToken, address debtToken, bytes memory data, IVenueAdapter adapter) =
+            _randomMarket(seed, venueId);
+
+        vm.prank(owner);
+        blm.setParams(debtToken, DEFAULT_SLOPE, DEFAULT_INTERCEPT);
+
+        (collateral, debt) = _boundHealthyPosition(collateralToken, debtToken, collateral, debt, venueId, data);
+
+        Quote memory quote = _buildQuote(collateralToken, debtToken, collateral, debt, MIN_DURATION, venueId, data);
+        address pod = _openLoan(quote);
+        Position memory pos = iris.getPosition(pod);
+
+        _forward(blocks);
+        (,, uint256 fixedLeg, uint256 floatingLeg, uint256 surplus) = iris.accrueLegsView(pod);
+        vm.assume(floatingLeg != 0);
+
+        uint256 price = adapter.price(collateralToken, debtToken, data);
+        // The liquidated collateral is worth at least the whole venue debt, as an incentivized liquidation seizes,
+        // so the repayment cap does not bind and the full floating leg is recognized.
+        uint256 minLiquidatedCollateral = (pos.debt + floatingLeg).mulDivUp(ORACLE_PRICE_SCALE, price);
+        vm.assume(minLiquidatedCollateral < pos.collateral + surplus);
+        remainingCollateral = bound(remainingCollateral, 1, pos.collateral + surplus - minLiquidatedCollateral);
+        _mockPositionAssets(adapter, pod, collateralToken, debtToken, data, remainingCollateral, 0);
+
+        uint256 overpaid = floatingLeg;
+        uint256 bondSlashed = MathLib.min(overpaid.zeroFloorSub(fixedLeg), pos.bond);
+        uint256 expectedCollateral = remainingCollateral.zeroFloorSub(surplus);
+
+        if (bondSlashed != 0) {
+            vm.expectEmit();
+            emit EventsLib.Claimable(debtToken, borrower, bondSlashed);
+        }
+        vm.expectEmit();
+        emit EventsLib.Rebase(
+            borrower,
+            pod,
+            expectedCollateral,
+            0,
+            fixedLeg.zeroFloorSub(overpaid),
+            pos.bond - bondSlashed,
+            remainingCollateral,
+            0,
+            0
+        );
+        vm.prank(borrower);
+        iris.rebase(pod);
+
+        Position memory newPos = iris.getPosition(pod);
+        assertEq(newPos.collateral, expectedCollateral);
+        assertEq(newPos.debt, 0);
+        assertEq(newPos.surplus, MathLib.min(surplus, remainingCollateral));
+        assertEq(newPos.fixedLeg, fixedLeg.zeroFloorSub(overpaid));
+        assertEq(newPos.floatingLeg, 0);
+        assertEq(newPos.bond, pos.bond - bondSlashed);
+        assertEq(newPos.bondRequirement, 0);
+        assertEq(iris.claimable(debtToken, borrower), bondSlashed);
+    }
+
+    // External supply collateral with venue debt reduction (external repay or liquidated). rebase syncs the
+    // supply and leaves the one-sided debt reduction unreconciled.
     function testRebaseExternalSupplyCollateralWithDebtReduction(
         uint256 collateral,
         uint256 debt,
@@ -372,8 +478,9 @@ contract RebaseForkTest is ForkTest {
 
         iris.rebase(pod);
 
+        // The direct supply is tracked as collateral; the one-sided debt reduction stays unreconciled.
         Position memory newPos = iris.getPosition(pod);
-        assertEq(newPos.collateral, pos.collateral);
+        assertEq(newPos.collateral, pos.collateral + supplied);
         assertEq(newPos.debt, pos.debt);
         assertEq(newPos.bondRequirement, pos.bondRequirement);
     }
@@ -448,3 +555,4 @@ contract RebaseForkTest is ForkTest {
         quote.bond = blm.bondRequirement(quote);
     }
 }
+

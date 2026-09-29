@@ -36,9 +36,14 @@ abstract contract InvariantTest is ForkTest {
 
     modifier logCall(string memory name) {
         console.log(msg.sender, "->", name);
+        _beforeCall();
 
         _;
     }
+
+    /// @dev Invariant functions run without committing state, so any history an invariant compares against must
+    /// be recorded from the handler side, before the call.
+    function _beforeCall() internal virtual {}
 
     // supply to morpho so invariant runs can reach take paths more often.
     function _supplyMorpho() internal {
@@ -223,10 +228,11 @@ abstract contract InvariantTest is ForkTest {
         return iris.getPosition(pod).bondRequirement != 0;
     }
 
+    /// @dev Resolved and settled: escape needs bondRequirement zero and nothing outstanding (debt, fixed leg, surplus).
     function _isResolvedPod(address pod) internal view returns (bool) {
         Position memory pos = iris.getPosition(pod);
 
-        return pos.lastUpdate != 0 && pos.bondRequirement == 0;
+        return pos.lastUpdate != 0 && pos.bondRequirement == 0 && uint256(pos.debt) + pos.fixedLeg + pos.surplus == 0;
     }
 
     function _isRepayablePod(address pod) internal view returns (bool) {
@@ -234,7 +240,7 @@ abstract contract InvariantTest is ForkTest {
 
         Position memory pos = iris.getPosition(pod);
 
-        return uint256(pos.debt) + pos.fixedLeg != 0 || pos.bondRequirement != 0;
+        return uint256(pos.debt) + pos.fixedLeg != 0 || pos.bondRequirement != 0 || pos.surplus != 0;
     }
 
     function _isEarlyRepayablePod(address pod) internal view returns (bool) {
@@ -246,12 +252,9 @@ abstract contract InvariantTest is ForkTest {
     }
 
     function _isLiquidatablePod(address pod) internal view returns (bool) {
-        if (!_isCreatedPod(pod)) return false;
+        if (!_isRepayablePod(pod)) return false;
 
-        Position memory pos = iris.getPosition(pod);
         Loan memory loan = iris.getLoan(pod);
-
-        if (uint256(pos.debt) + pos.fixedLeg == 0) return false;
 
         return block.timestamp > uint256(loan.maturity) + loan.overduePeriod;
     }
@@ -263,7 +266,6 @@ abstract contract InvariantTest is ForkTest {
         Loan memory loan = iris.getLoan(pod);
 
         if (pos.bondRequirement == 0) return false;
-        if (pos.bond < pos.bondRequirement) return true;
 
         (,, uint256 fixedLeg, uint256 floatingLeg,) = iris.accrueLegsView(pod);
         if (floatingLeg <= fixedLeg) return false;
@@ -298,7 +300,7 @@ abstract contract InvariantTest is ForkTest {
 
         Loan memory loan = iris.getLoan(pod);
         IVenueAdapter adapter = IVenueAdapter(iris.venueAdapter(pos.venueId));
-        (,, uint256 fixedLeg,,) = iris.accrueLegsView(pod);
+        (,, uint256 fixedLeg, uint256 floatingLeg,) = iris.accrueLegsView(pod);
 
         uint256 price = adapter.price(loan.collateralToken, loan.debtToken, pos.data);
         uint256 lltv = adapter.lltv(loan.collateralToken, loan.debtToken, pos.data);
@@ -309,8 +311,8 @@ abstract contract InvariantTest is ForkTest {
                     * loan.overdueRate * BP,
                 SECONDS_PER_YEAR * WAD
             );
-        uint256 irisMin =
-            (uint256(pos.debt) + fixedLeg + residual).mulDivUp(WAD, lltv).mulDivUp(ORACLE_PRICE_SCALE, price);
+        uint256 exposure = MathLib.max(fixedLeg + residual, floatingLeg.zeroFloorSub(pos.bond));
+        uint256 irisMin = (uint256(pos.debt) + exposure).mulDivUp(WAD, lltv).mulDivUp(ORACLE_PRICE_SCALE, price);
 
         (uint256 venueCollateral, uint256 venueDebt) =
             adapter.positionAssets(pod, loan.collateralToken, loan.debtToken, pos.data);
