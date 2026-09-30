@@ -72,8 +72,8 @@ import {IVenueAdapter} from "./interfaces/IVenueAdapter.sol";
 /// @dev While a slash leaves the bond below bondRequirement on a loan that still has venue debt, the solver cannot
 /// withdraw. its exit is repay. Once the venue debt is retired bondRequirement drops to zero and the floor no longer
 /// applies.
-/// @dev A rebase that zeroes the bond zeroes bondRequirement too, as a bond liquidation would, so an open loan always
-/// holds a non-zero bond. As on bond liquidation, the solver forfeits the surplus.
+/// @dev A rebase that zeroes the bond zeroes bondRequirement too, as a bond liquidation would, so a loan with a
+/// non-zero bondRequirement always holds a non-zero bond. As on bond liquidation, the solver forfeits the surplus.
 ///
 /// BOND LIQUIDATION
 /// @dev Small positions may not be liquidated due to the liquidation incentive <= gas cost.
