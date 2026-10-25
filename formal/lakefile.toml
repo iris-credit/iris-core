@@ -1,0 +1,5 @@
+name = "IrisFormal"
+defaultTargets = ["IrisFormal"]
+
+[[lean_lib]]
+name = "IrisFormal"
