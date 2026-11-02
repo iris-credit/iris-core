@@ -37,6 +37,16 @@ if [ -e "$STATE" ] && [ "$(tail -c 1 "$STATE")" != "}" ]; then
   echo "state.json was truncated; moved it aside and started from a fresh fork (run devnet/replay.sh)" >&2
 fi
 
+# The public door: devnet-proxy on PROXY_PORT (the custom domain's target port) forwards standard
+# JSON-RPC and refuses cheatcodes outside /admin/<ADMIN_TOKEN>. anvil's own port stays reachable only on
+# Railway's private network. Restart the proxy if it ever exits; anvil stays the main process.
+export ANVIL_URL="http://127.0.0.1:${PORT:-8545}"
+(while true; do
+  /usr/local/bin/devnet-proxy || true
+  echo "devnet-proxy exited; restarting" >&2
+  sleep 1
+done) &
+
 # Chain id 9991 (the SDK's ChainId.VNet) so @iris-credit/core-sdk addresses
 # resolve unchanged while devnet transactions and EIP-712 signatures stay invalid on
 # mainnet — no cross-replay. Throwaway keys only — never a real key against this URL.
