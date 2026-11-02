@@ -2,7 +2,7 @@
 # Rebuild the Iris deployment on a fresh devnet fork at the exact addresses in deployments/9991.json
 # (mirrored by @iris-credit/core-sdk's CHAIN_ADDRESSES[VNet]), so a devnet reset needs no SDK release.
 # Run once after the devnet starts on a new DEVNET_EPOCH:
-#   RPC_URL=https://devnet.iris.credit SOLVER=0x… KEEPERS="0x… 0x…" ./devnet/replay.sh
+#   RPC_URL=https://devnet.iris.credit/admin/<ADMIN_TOKEN> SOLVER=0x… KEEPERS="0x… 0x…" ./devnet/replay.sh
 #
 # How the addresses come back:
 # - Iris, Blm, WhitelistBlm and EthereumGeneralAdapter1 were CREATEd by DEPLOYER at nonces 0, 1, 2 and 15.

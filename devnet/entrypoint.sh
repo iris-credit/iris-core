@@ -15,7 +15,7 @@ esac
 STATE=/data/state.json
 
 # Without the volume every restart silently drops all staging state.
-if ! grep -qs ' /data ' /proc/mounts && [ -z "$ALLOW_EPHEMERAL" ]; then
+if ! grep -qs ' /data ' /proc/mounts && [ "$ALLOW_EPHEMERAL" != 1 ]; then
   echo "no volume mounted at /data (set ALLOW_EPHEMERAL=1 to run without persistence)" >&2
   exit 1
 fi
@@ -24,7 +24,9 @@ mkdir -p /data
 # Reset switch: changing DEVNET_EPOCH starts over from a fresh fork of the current head (then run
 # devnet/replay.sh). A plain restart or redeploy keeps the state.
 EPOCH="${DEVNET_EPOCH:-0}"
-if [ "$(cat /data/epoch 2>/dev/null)" != "$EPOCH" ]; then
+# A volume from before the marker existed adopts the current epoch, so a rollout never resets it.
+[ -e /data/epoch ] || echo "$EPOCH" >/data/epoch
+if [ "$(cat /data/epoch)" != "$EPOCH" ]; then
   rm -f "$STATE"
   echo "$EPOCH" >/data/epoch
   echo "devnet epoch $EPOCH: starting from a fresh fork" >&2
@@ -36,6 +38,16 @@ if [ -e "$STATE" ] && [ "$(tail -c 1 "$STATE")" != "}" ]; then
   mv "$STATE" "/data/state.corrupt.$(date +%s).json"
   echo "state.json was truncated; moved it aside and started from a fresh fork (run devnet/replay.sh)" >&2
 fi
+
+# The public door: devnet-proxy on PROXY_PORT (the custom domain's target port) forwards standard
+# JSON-RPC and refuses cheatcodes outside /admin/<ADMIN_TOKEN>. anvil's own port stays reachable only on
+# Railway's private network. Restart the proxy if it ever exits; anvil stays the main process.
+export ANVIL_URL="http://127.0.0.1:${PORT:-8545}"
+(while true; do
+  /usr/local/bin/devnet-proxy || true
+  echo "devnet-proxy exited; restarting" >&2
+  sleep 1
+done) &
 
 # Chain id 9991 (the SDK's ChainId.VNet) so @iris-credit/core-sdk addresses
 # resolve unchanged while devnet transactions and EIP-712 signatures stay invalid on

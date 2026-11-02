@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Fund a devnet account with ETH, USDC and USDT (the devnet's faucet).
-#   RPC_URL=https://devnet.iris.credit ./devnet/fund.sh 0xYourAddress [eth=100] [usdc=1000000] [usdt=1000000]
+#   RPC_URL=https://devnet.iris.credit/admin/<ADMIN_TOKEN> ./devnet/fund.sh 0xYourAddress [eth=100] [usdc=1000000] [usdt=1000000]
+# It needs the admin RPC: the public one refuses cheatcodes.
 # Amounts are whole tokens and SET the balance rather than adding to it. Balances are written straight
 # into each token's balance mapping: anvil_dealERC20 cannot locate the slot behind USDC's proxy.
 set -euo pipefail

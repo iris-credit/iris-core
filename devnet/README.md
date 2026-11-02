@@ -4,10 +4,20 @@ Shared staging network: a long-lived anvil fork of Ethereum mainnet at chain id 
 (the SDK's `ChainId.VNet`), consumed as a plain RPC URL by iris-rfq, iris-indexer,
 iris-ui, and the iris-bots services.
 
-- **Public RPC** (rfq, UI, solvers, scriptMaster's `VNET_RPC_URL`):
-  `https://devnet.iris.credit` — Cloudflare-proxied, rate-limited 50 req/10s per IP.
+- **Public RPC** (rfq, UI, wallets): `https://devnet.iris.credit`, and `wss://devnet.iris.credit`
+  for `eth_subscribe`. It is Cloudflare-proxied and rate-limited to 50 req/10s per IP (a
+  WebSocket counts once, when it connects). `devnet-proxy` (`proxy/`) serves it and forwards
+  only standard JSON-RPC (reads, `eth_call`, `eth_estimateGas`, `eth_simulateV1`,
+  `eth_sendRawTransaction`, …), checking every WebSocket message the same way. Cheatcodes,
+  `eth_sendTransaction`, signing and tracing get a `-32601` error. Batches are capped at 1000
+  calls.
+- **Admin RPC** (`replay.sh`, `fund.sh`, scriptMaster's `VNET_RPC_URL`, the faucet's server):
+  `https://devnet.iris.credit/admin/<ADMIN_TOKEN>` (and `wss://` on the same path) passes every
+  method through, cheatcodes included. Treat the URL as a secret. The rate-limit rule matches
+  only `/`, so this path skips it.
 - **Internal RPC** (indexer, cron, bots; same Railway project): `http://devnet.railway.internal:8545`
-  (`ws://` for subscriptions) — bypasses Cloudflare and its rate limit entirely.
+  (`ws://` for subscriptions) is anvil's own port. It bypasses Cloudflare, the rate limit and
+  the proxy entirely.
 
 The Iris deployment lives at the addresses in `deployments/9991.json`, which
 `@iris-credit/core-sdk` mirrors as `CHAIN_ADDRESSES[ChainId.VNet]`. A fresh fork does not
@@ -32,14 +42,19 @@ repo against the fork's URL like any other network.
    - `DEVNET_EPOCH` (optional): the reset switch, see below.
    - `FORK_BLOCK_NUMBER` (optional): pin the fork base block. Unset = fork at the head
      block when a new epoch starts; restarts reuse the block recorded in the state file.
-   - `PORT` (set to `8545`): keeps the listening port stable so project-internal
-     consumers can address `devnet.railway.internal:8545`.
+   - `PORT` (set to `8545`): anvil's port, kept stable so project-internal consumers
+     can address `devnet.railway.internal:8545`.
+   - `ADMIN_TOKEN` (required for the admin RPC, 24+ characters): opens
+     `/admin/<ADMIN_TOKEN>`. Unset or too short, that path is closed.
+   - `PROXY_PORT` (optional, default `8080`): the proxy's port, which the custom domain
+     targets.
 4. Resource limits: cap the service's memory (anvil holds the forked state in RAM, and
    RAM is what Railway bills for) and keep a workspace usage limit set. The volume itself
    costs next to nothing.
-5. Networking: add the custom domain `devnet.iris.credit` (Cloudflare-proxied
-   CNAME, zone SSL `Full`), then delete the Railway-generated domain so Cloudflare
-   is the only door. The zone's rate-limit rule matches `http.request.uri.path eq "/"`
+5. Networking: add the custom domain `devnet.iris.credit` with **target port `8080`** (the
+   proxy, never anvil's `8545`; `railway domain update devnet.iris.credit --port 8080`).
+   Use a Cloudflare-proxied CNAME with zone SSL `Full`, then delete the Railway-generated
+   domain so Cloudflare is the only door. The zone's rate-limit rule matches `http.request.uri.path eq "/"`
    — all JSON-RPC lands on `/`, and the free plan lacks per-hostname matching, so
    the rule is zone-wide; revisit if another `iris.credit` property hammers its root.
    Project-internal consumers use the Railway-internal hostname and skip all of this.
@@ -48,12 +63,13 @@ repo against the fork's URL like any other network.
 
 1. Set `DEVNET_EPOCH` to a new value and redeploy. The entrypoint deletes the state
    file and anvil forks the current mainnet head. A plain restart or redeploy keeps the
-   state. A state file cut short mid-write is moved aside the same way, rather than
-   crash-looping the service.
+   state, and so does a volume with no epoch marker yet (`/data/epoch`): it adopts the
+   current epoch. A state file cut short mid-write is moved aside the same way, rather
+   than crash-looping the service.
 2. From this repo, rebuild Iris and fund the staging actors:
 
    ```bash
-   RPC_URL=https://devnet.iris.credit SOLVER=0x… KEEPERS="0x… 0x… 0x…" ./devnet/replay.sh
+   RPC_URL=https://devnet.iris.credit/admin/<ADMIN_TOKEN> SOLVER=0x… KEEPERS="0x… 0x… 0x…" ./devnet/replay.sh
    ```
 
    It deploys every contract at its recorded address (it explains how in its header)
@@ -64,8 +80,8 @@ repo against the fork's URL like any other network.
    default key.
 4. Re-index: point the indexer at the new fork's start block and redeploy it.
 
-`./devnet/fund.sh <address> [eth] [usdc] [usdt]` sets balances for any test account.
-It is the faucet.
+`RPC_URL=<admin RPC> ./devnet/fund.sh <address> [eth] [usdc] [usdt]` sets balances for
+any test account.
 
 ## Consumers
 
@@ -76,15 +92,12 @@ signatures are invalid on mainnet and vice versa: nothing signed here can be rep
 
 ## Rules of the road
 
-- **Throwaway keys only.** The endpoint exposes anvil cheatcodes
-  (`--auto-impersonate`, `anvil_setBalance`, …) — god-mode is the feature, and the
-  hostname is public knowledge (Cloudflare's cert put it in CT logs), gated only by
-  the rate limit. Assume strangers can read and mutate staging state; never sign
-  with a real key. If unexplained state changes start happening, the planned fix is
-  a Cloudflare Worker method filter: the public allowlist enumerates specific
-  read-only methods plus `eth_sendRawTransaction` — never the whole `eth_*` prefix,
-  because `eth_sendTransaction` under `--auto-impersonate` is an unauthenticated
-  arbitrary-sender write — with cheatcodes behind a token path. Until then, recovery
-  is "Reset and rebuild".
+- **Throwaway keys only.** The hostname is public knowledge (Cloudflare's cert put it in
+  CT logs). The public RPC refuses cheatcodes, but anyone can still send signed
+  transactions, including from anvil's well-known default accounts. Never sign with a
+  real key. Anyone holding the admin URL has god-mode: rotate `ADMIN_TOKEN` if it leaks.
+  The proxy's allowlist names exact methods, never the whole `eth_*` prefix, because
+  `eth_sendTransaction` under `--auto-impersonate` is an unauthenticated arbitrary-sender
+  write.
 - The fork inherits mainnet state **as of its creation block**. Mainnet config done
   later does not appear here. Mirror it via scriptMaster's VNet arm, or reset.
