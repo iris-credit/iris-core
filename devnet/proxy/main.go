@@ -10,6 +10,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -20,7 +21,14 @@ import (
 	"time"
 )
 
-const maxBody = 5 << 20
+const (
+	maxBody = 5 << 20
+	// maxBatch caps the calls in one batch request; anvil gains nothing from more, and every
+	// refused call costs a response object.
+	maxBatch = 100
+	// maxMethodEcho caps how much of a refused method name is echoed back or logged.
+	maxMethodEcho = 64
+)
 
 // Exact names only: a prefix rule would also admit eth_sendTransaction, which anvil runs as an
 // unauthenticated arbitrary-sender write under --auto-impersonate.
@@ -66,7 +74,10 @@ type request struct {
 	method string
 }
 
-var errMalformed = errors.New("malformed JSON-RPC request")
+var (
+	errMalformed = errors.New("malformed JSON-RPC request")
+	errBatchSize = fmt.Errorf("batch larger than %d calls", maxBatch)
+)
 
 // parseRequest walks the object's keys itself rather than unmarshalling into a struct:
 // encoding/json matches field names case-insensitively, so {"method":"anvil_setCode","Method":"eth_call"}
@@ -115,6 +126,9 @@ func parseBody(body []byte) ([]request, bool, error) {
 		if err := json.Unmarshal(trimmed, &items); err != nil || len(items) == 0 {
 			return nil, true, errMalformed
 		}
+		if len(items) > maxBatch {
+			return nil, true, errBatchSize
+		}
 		reqs := make([]request, len(items))
 		for i, item := range items {
 			req, err := parseRequest(item)
@@ -132,25 +146,42 @@ func parseBody(body []byte) ([]request, bool, error) {
 	return []request{req}, false, nil
 }
 
+// echo quotes a client-supplied method name for error messages and logs, truncated so a long
+// name can't inflate either.
+func echo(method string) string {
+	if len(method) > maxMethodEcho {
+		method = method[:maxMethodEcho] + "..."
+	}
+	return fmt.Sprintf("%q", method)
+}
+
 // deny returns the response to send instead of forwarding, or nil when every call is public.
-// A batch with any refused call is refused whole, one error per call.
+// A batch with any refused call is refused whole, one error per call. Each error names only its
+// own call's method, so the response stays linear in the request size.
 func deny(body []byte) (any, []string) {
 	reqs, batch, err := parseBody(body)
 	if err != nil {
-		return rpcResponse{"2.0", json.RawMessage("null"), rpcError{-32700, err.Error()}}, []string{"<malformed>"}
+		code := -32700
+		if errors.Is(err, errBatchSize) {
+			code = -32600
+		}
+		return rpcResponse{"2.0", json.RawMessage("null"), rpcError{code, err.Error()}}, []string{"<" + err.Error() + ">"}
 	}
 	var refused []string
 	for _, r := range reqs {
 		if !publicMethods[r.method] {
-			refused = append(refused, r.method)
+			refused = append(refused, echo(r.method))
 		}
 	}
 	if len(refused) == 0 {
 		return nil, nil
 	}
-	msg := "method not available on the public devnet RPC: " + strings.Join(refused, ", ")
 	out := make([]rpcResponse, len(reqs))
 	for i, r := range reqs {
+		msg := "batch refused: it contains a method not available on the public devnet RPC"
+		if !publicMethods[r.method] {
+			msg = "method not available on the public devnet RPC: " + echo(r.method)
+		}
 		out[i] = rpcResponse{"2.0", r.id, rpcError{-32601, msg}}
 	}
 	if batch {
@@ -198,7 +229,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if !admin {
 		if resp, refused := deny(body); resp != nil {
-			log.Printf("refused %s from %s", strings.Join(refused, ","), clientIP(r))
+			log.Printf("refused %s from %q", strings.Join(refused, ","), clientIP(r))
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(resp)

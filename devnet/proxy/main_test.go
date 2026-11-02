@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -26,14 +28,18 @@ func TestDeny(t *testing.T) {
 		{"batch hiding a cheatcode", `[{"id":1,"method":"eth_chainId"},{"id":2,"method":"anvil_reset"}]`, true},
 		{"case-variant key", `{"id":1,"method":"anvil_setCode","Method":"eth_call"}`, true},
 		{"duplicate method key", `{"id":1,"method":"anvil_setCode","method":"eth_call"}`, true},
-		{"escaped method", `{"id":1,"method":"anvil_setCode"}`, true},
-		{"escaped key", `{"id":1,"method":"anvil_setCode"}`, true},
+		{"escaped method", `{"id":1,"method":"anvil\u005fsetCode"}`, true},
+		{"escaped key", `{"id":1,"\u006dethod":"anvil_setCode"}`, true},
+		{"escaped key hiding a cheatcode", `{"id":1,"\u006dethod":"anvil_setCode","method":"eth_call"}`, true},
+		{"escaped public method", `{"id":1,"method":"eth\u005fchainId"}`, false},
 		{"non-string method", `{"id":1,"method":["eth_call"]}`, true},
 		{"missing method", `{"id":1}`, true},
 		{"trailing value", `{"id":1,"method":"eth_call"} {"id":2,"method":"anvil_reset"}`, true},
 		{"malformed", `{"id":1,"method":`, true},
 		{"empty batch", `[]`, true},
 		{"batch of non-objects", `["eth_call"]`, true},
+		{"batch at the cap", batchOf(maxBatch, "eth_chainId"), false},
+		{"batch over the cap", batchOf(maxBatch+1, "eth_chainId"), true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -42,6 +48,47 @@ func TestDeny(t *testing.T) {
 				t.Fatalf("refused = %v, want %v", got, c.refused)
 			}
 		})
+	}
+}
+
+func batchOf(n int, method string) string {
+	calls := make([]string, n)
+	for i := range calls {
+		calls[i] = fmt.Sprintf(`{"id":%d,"method":%q}`, i, method)
+	}
+	return "[" + strings.Join(calls, ",") + "]"
+}
+
+// A refused batch answers each call with its own method only, so the response grows linearly
+// with the request instead of echoing every refused name into every error.
+func TestDenyResponseIsLinear(t *testing.T) {
+	long := "anvil_" + strings.Repeat("x", 10_000)
+	body := batchOf(maxBatch, long)
+	resp, refused := deny([]byte(body))
+	if resp == nil || len(refused) != maxBatch {
+		t.Fatalf("refused %d calls, want %d", len(refused), maxBatch)
+	}
+	out, _ := json.Marshal(resp)
+	if len(out) > 300*maxBatch {
+		t.Fatalf("response is %d bytes for a %d-byte request", len(out), len(body))
+	}
+	var calls []rpcResponse
+	if err := json.Unmarshal(out, &calls); err != nil || len(calls) != maxBatch {
+		t.Fatalf("decode: %v, %d calls", err, len(calls))
+	}
+	if strings.Contains(calls[0].Error.Message, strings.Repeat("x", maxMethodEcho+1)) {
+		t.Fatalf("method name not truncated: %s", calls[0].Error.Message)
+	}
+
+	resp, _ = deny([]byte(`[{"id":1,"method":"eth_chainId"},{"id":2,"method":"anvil_reset"}]`))
+	mixed := resp.([]rpcResponse)
+	if strings.Contains(mixed[0].Error.Message, "anvil_reset") || !strings.Contains(mixed[1].Error.Message, `"anvil_reset"`) {
+		t.Fatalf("per-call messages: %q, %q", mixed[0].Error.Message, mixed[1].Error.Message)
+	}
+
+	resp, _ = deny([]byte(batchOf(maxBatch+1, "eth_chainId")))
+	if r, ok := resp.(rpcResponse); !ok || r.Error.Code != -32600 {
+		t.Fatalf("oversized batch: %+v", resp)
 	}
 }
 
