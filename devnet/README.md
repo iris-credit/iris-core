@@ -4,15 +4,17 @@ Shared staging network: a long-lived anvil fork of Ethereum mainnet at chain id 
 (the SDK's `ChainId.VNet`), consumed as a plain RPC URL by iris-rfq, iris-indexer,
 iris-ui, and the iris-bots services.
 
-- **Public RPC** (rfq, UI, wallets): `https://devnet.iris.credit`. It is Cloudflare-proxied and
-  rate-limited to 50 req/10s per IP. `devnet-proxy` (`proxy/`) serves it and forwards only
-  standard JSON-RPC (reads, `eth_call`, `eth_estimateGas`, `eth_simulateV1`,
-  `eth_sendRawTransaction`, …). Cheatcodes, `eth_sendTransaction`, signing and tracing get a
-  `-32601` error.
+- **Public RPC** (rfq, UI, wallets): `https://devnet.iris.credit`, and `wss://devnet.iris.credit`
+  for `eth_subscribe`. It is Cloudflare-proxied and rate-limited to 50 req/10s per IP (a
+  WebSocket counts once, when it connects). `devnet-proxy` (`proxy/`) serves it and forwards
+  only standard JSON-RPC (reads, `eth_call`, `eth_estimateGas`, `eth_simulateV1`,
+  `eth_sendRawTransaction`, …), checking every WebSocket message the same way. Cheatcodes,
+  `eth_sendTransaction`, signing and tracing get a `-32601` error. Batches are capped at 1000
+  calls.
 - **Admin RPC** (`replay.sh`, `fund.sh`, scriptMaster's `VNET_RPC_URL`, the faucet's server):
-  `https://devnet.iris.credit/admin/<ADMIN_TOKEN>` passes every method through, cheatcodes
-  included. Treat the URL as a secret. The rate-limit rule matches only `/`, so this path
-  skips it.
+  `https://devnet.iris.credit/admin/<ADMIN_TOKEN>` (and `wss://` on the same path) passes every
+  method through, cheatcodes included. Treat the URL as a secret. The rate-limit rule matches
+  only `/`, so this path skips it.
 - **Internal RPC** (indexer, cron, bots; same Railway project): `http://devnet.railway.internal:8545`
   (`ws://` for subscriptions) is anvil's own port. It bypasses Cloudflare, the rate limit and
   the proxy entirely.

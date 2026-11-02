@@ -1,7 +1,7 @@
-// Command devnet-proxy is the devnet's public door. It forwards standard JSON-RPC to anvil and
-// refuses everything else (cheatcodes, unlocked-account signing, tracing), except on
-// /admin/<ADMIN_TOKEN>, which passes every method through. Project-internal consumers bypass it and
-// talk to anvil's own port on the private network.
+// Command devnet-proxy is the devnet's public door. It forwards standard JSON-RPC to anvil, over
+// HTTP and WebSocket, and refuses everything else (cheatcodes, unlocked-account signing, tracing),
+// except on /admin/<ADMIN_TOKEN>, which passes every method through. Project-internal consumers
+// bypass it and talk to anvil's own port on the private network.
 package main
 
 import (
@@ -10,17 +10,26 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/coder/websocket"
 )
 
-const maxBody = 5 << 20
+const (
+	maxBody    = 5 << 20 // per HTTP body and per WebSocket message
+	maxBatch   = 1000    // viem's default batch size
+	maxNameLen = 64      // of a refused method name echoed in an error or a log line
+)
 
 // Exact names only: a prefix rule would also admit eth_sendTransaction, which anvil runs as an
 // unauthenticated arbitrary-sender write under --auto-impersonate.
@@ -38,7 +47,7 @@ var publicMethods = setOf(
 	"eth_getTransactionByBlockHashAndIndex", "eth_getTransactionReceipt",
 	"eth_getLogs", "eth_newFilter", "eth_newBlockFilter", "eth_newPendingTransactionFilter",
 	"eth_getFilterChanges", "eth_getFilterLogs", "eth_uninstallFilter",
-	"eth_sendRawTransaction",
+	"eth_sendRawTransaction", "eth_subscribe", "eth_unsubscribe",
 )
 
 func setOf(names ...string) map[string]bool {
@@ -66,7 +75,10 @@ type request struct {
 	method string
 }
 
-var errMalformed = errors.New("malformed JSON-RPC request")
+var (
+	errMalformed     = errors.New("malformed JSON-RPC request")
+	errBatchTooLarge = fmt.Errorf("batch of more than %d calls", maxBatch)
+)
 
 // parseRequest walks the object's keys itself rather than unmarshalling into a struct:
 // encoding/json matches field names case-insensitively, so {"method":"anvil_setCode","Method":"eth_call"}
@@ -110,34 +122,47 @@ func parseBody(body []byte) ([]request, bool, error) {
 	if !json.Valid(trimmed) { // also rejects a second value trailing the first
 		return nil, false, errMalformed
 	}
-	if trimmed[0] == '[' {
-		var items []json.RawMessage
-		if err := json.Unmarshal(trimmed, &items); err != nil || len(items) == 0 {
+	if trimmed[0] != '[' {
+		req, err := parseRequest(trimmed)
+		if err != nil {
+			return nil, false, err
+		}
+		return []request{req}, false, nil
+	}
+	// One call at a time, so an oversize batch stops at the cap instead of being decoded whole.
+	dec := json.NewDecoder(bytes.NewReader(trimmed))
+	_, _ = dec.Token() // the '['
+	var reqs []request
+	for dec.More() {
+		if len(reqs) == maxBatch {
+			return nil, true, errBatchTooLarge
+		}
+		var item json.RawMessage
+		if err := dec.Decode(&item); err != nil {
 			return nil, true, errMalformed
 		}
-		reqs := make([]request, len(items))
-		for i, item := range items {
-			req, err := parseRequest(item)
-			if err != nil {
-				return nil, true, err
-			}
-			reqs[i] = req
+		req, err := parseRequest(item)
+		if err != nil {
+			return nil, true, err
 		}
-		return reqs, true, nil
+		reqs = append(reqs, req)
 	}
-	req, err := parseRequest(trimmed)
-	if err != nil {
-		return nil, false, err
+	if len(reqs) == 0 {
+		return nil, true, errMalformed
 	}
-	return []request{req}, false, nil
+	return reqs, true, nil
 }
 
-// deny returns the response to send instead of forwarding, or nil when every call is public.
-// A batch with any refused call is refused whole, one error per call.
-func deny(body []byte) (any, []string) {
+// deny returns the response to send instead of forwarding (nil when every call is public) and a
+// log summary. A batch with any refused call is refused whole. Each error names only its own call:
+// one shared list of every refused name made a batch's answer grow with the square of its length.
+func deny(body []byte) (any, string) {
 	reqs, batch, err := parseBody(body)
+	if errors.Is(err, errBatchTooLarge) {
+		return rpcResponse{"2.0", json.RawMessage("null"), rpcError{-32600, err.Error()}}, "an oversize batch"
+	}
 	if err != nil {
-		return rpcResponse{"2.0", json.RawMessage("null"), rpcError{-32700, err.Error()}}, []string{"<malformed>"}
+		return rpcResponse{"2.0", json.RawMessage("null"), rpcError{-32700, err.Error()}}, "a malformed request"
 	}
 	var refused []string
 	for _, r := range reqs {
@@ -146,21 +171,46 @@ func deny(body []byte) (any, []string) {
 		}
 	}
 	if len(refused) == 0 {
-		return nil, nil
+		return nil, ""
 	}
-	msg := "method not available on the public devnet RPC: " + strings.Join(refused, ", ")
 	out := make([]rpcResponse, len(reqs))
 	for i, r := range reqs {
+		msg := "batch refused: another call in it is not available on the public devnet RPC"
+		if !publicMethods[r.method] {
+			msg = "method not available on the public devnet RPC: " + clip(r.method)
+		}
 		out[i] = rpcResponse{"2.0", r.id, rpcError{-32601, msg}}
 	}
 	if batch {
-		return out, refused
+		return out, summarize(refused)
 	}
-	return out[0], refused
+	return out[0], summarize(refused)
+}
+
+func clip(s string) string {
+	if len(s) > maxNameLen {
+		return s[:maxNameLen] + "..."
+	}
+	return s
+}
+
+// summarize keeps a refusal's log line bounded: the call count and the first few distinct names.
+func summarize(methods []string) string {
+	var names []string
+	for _, m := range methods {
+		if len(names) == 3 {
+			break
+		}
+		if q := strconv.Quote(clip(m)); !slices.Contains(names, q) {
+			names = append(names, q)
+		}
+	}
+	return fmt.Sprintf("%d call(s): %s", len(methods), strings.Join(names, " "))
 }
 
 type handler struct {
 	anvil      *httputil.ReverseProxy
+	anvilWS    string // anvil's WebSocket URL
 	adminToken string
 }
 
@@ -183,6 +233,10 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r.URL.Path, r.URL.RawPath = "/", "" // anvil serves JSON-RPC on "/"; the token never reaches it
+	if r.Method == http.MethodGet && strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		h.serveWS(w, r, admin)
+		return
+	}
 	if r.Method == http.MethodOptions {
 		h.anvil.ServeHTTP(w, r) // CORS preflight, answered by anvil
 		return
@@ -197,8 +251,8 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !admin {
-		if resp, refused := deny(body); resp != nil {
-			log.Printf("refused %s from %s", strings.Join(refused, ","), clientIP(r))
+		if resp, reason := deny(body); resp != nil {
+			log.Printf("refused %s from %s", reason, clientIP(r))
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(resp)
@@ -208,6 +262,86 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	r.ContentLength = int64(len(body))
 	h.anvil.ServeHTTP(w, r)
+}
+
+// serveWS relays one WebSocket connection to anvil (subscriptions need it). On the public door every
+// client message gets the HTTP body's check; a refused one is answered here and never reaches anvil.
+func (h *handler) serveWS(w http.ResponseWriter, r *http.Request, admin bool) {
+	// Dial first so an unreachable anvil is a plain 502, as over HTTP.
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	upstream, _, err := websocket.Dial(ctx, h.anvilWS, nil)
+	if err != nil {
+		log.Printf("anvil unreachable: %v", err)
+		w.WriteHeader(http.StatusBadGateway)
+		return
+	}
+	// Any origin, as anvil's CORS allows: the socket carries no cookies or credentials.
+	client, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+	if err != nil {
+		_ = upstream.CloseNow()
+		return // Accept has answered the client
+	}
+	client.SetReadLimit(maxBody)
+	upstream.SetReadLimit(-1) // anvil's replies are streamed through uncapped, as over HTTP
+
+	done := make(chan error, 2)
+	go func() { done <- fromClient(client, upstream, admin, clientIP(r)) }()
+	go func() { done <- relay(client, upstream) }()
+	status := websocket.CloseStatus(<-done)
+	if status != websocket.StatusNormalClosure {
+		status = websocket.StatusGoingAway
+	}
+	// Both sides get a close frame; that also ends the other direction's loop.
+	_ = client.Close(status, "")
+	_ = upstream.Close(status, "")
+	<-done
+}
+
+// fromClient forwards client messages to anvil. Text and binary frames are both checked: anvil
+// would run either.
+func fromClient(client, upstream *websocket.Conn, admin bool, ip string) error {
+	ctx := context.Background()
+	for {
+		typ, msg, err := client.Read(ctx)
+		if err != nil {
+			return err
+		}
+		if !admin {
+			if resp, reason := deny(msg); resp != nil {
+				log.Printf("refused %s over WebSocket from %s", reason, ip)
+				out, _ := json.Marshal(resp)
+				if err := client.Write(ctx, websocket.MessageText, out); err != nil {
+					return err
+				}
+				continue
+			}
+		}
+		if err := upstream.Write(ctx, typ, msg); err != nil {
+			return err
+		}
+	}
+}
+
+// relay streams anvil's messages (replies and subscription notifications) to the client unchanged.
+func relay(dst, src *websocket.Conn) error {
+	ctx := context.Background()
+	for {
+		typ, r, err := src.Reader(ctx)
+		if err != nil {
+			return err
+		}
+		w, err := dst.Writer(ctx, typ)
+		if err != nil {
+			return err
+		}
+		if _, err := io.Copy(w, r); err != nil {
+			return err
+		}
+		if err := w.Close(); err != nil {
+			return err
+		}
+	}
 }
 
 func clientIP(r *http.Request) string {
@@ -235,9 +369,11 @@ func main() {
 		log.Printf("anvil unreachable: %v", err)
 		w.WriteHeader(http.StatusBadGateway)
 	}
+	ws := *target
+	ws.Scheme = strings.Replace(target.Scheme, "http", "ws", 1) // http->ws, https->wss
 	srv := &http.Server{
 		Addr:              ":" + envOr("PROXY_PORT", "8080"),
-		Handler:           &handler{anvil: anvil, adminToken: token},
+		Handler:           &handler{anvil: anvil, anvilWS: ws.String(), adminToken: token},
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	log.Printf("devnet-proxy on %s -> %s", srv.Addr, target)
