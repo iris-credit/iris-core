@@ -40,8 +40,12 @@ repo against the fork's URL like any other network.
      entrypoint rejects a `FORK_URL` that embeds one).
    - `FORK_URL` (optional): defaults to `https://eth-mainnet.g.alchemy.com/v2`.
    - `DEVNET_EPOCH` (optional): the reset switch, see below.
-   - `FORK_BLOCK_NUMBER` (optional): pin the fork base block. Unset = fork at the head
-     block when a new epoch starts; restarts reuse the block recorded in the state file.
+   - `FORK_BLOCK_NUMBER` (optional, normally unset): an epoch forks the head block, and the
+     entrypoint records that block in `/data/fork-block`. Every later boot of the epoch
+     forks the same block. Unpinned, anvil would re-fork the new head and lay the old
+     snapshot over it, which mixes two mainnet heights: venue math reverts, and logs
+     below the new fork block disappear. Set this only to force a specific block, and
+     unset it before bumping `DEVNET_EPOCH`, or the new epoch reuses it.
    - `PORT` (set to `8545`): anvil's port, kept stable so project-internal consumers
      can address `devnet.railway.internal:8545`.
    - `ADMIN_TOKEN` (required for the admin RPC, 24+ characters): opens
@@ -62,10 +66,11 @@ repo against the fork's URL like any other network.
 ## Reset and rebuild
 
 1. Set `DEVNET_EPOCH` to a new value and redeploy. The entrypoint deletes the state
-   file and anvil forks the current mainnet head. A plain restart or redeploy keeps the
-   state, and so does a volume with no epoch marker yet (`/data/epoch`): it adopts the
-   current epoch. A state file cut short mid-write is moved aside the same way, rather
-   than crash-looping the service.
+   file and the recorded fork block, and anvil forks the current mainnet head. That block
+   is recorded, and on a fresh chain the clock is moved to now. A plain restart or
+   redeploy keeps the state and the fork block, and so does a volume with no epoch marker
+   yet (`/data/epoch`): it adopts the current epoch. A state file cut short mid-write is
+   moved aside, rather than crash-looping the service; the recorded fork block stays.
 2. From this repo, rebuild Iris and fund the staging actors:
 
    ```bash
@@ -78,7 +83,9 @@ repo against the fork's URL like any other network.
 3. Redeploy the liquidation bot's Executor, a CREATE2 contract with a fixed address:
    iris-bots' `pnpm --filter @repo/contracts run deploy:executor`, signed with an anvil
    default key.
-4. Re-index: point the indexer at the new fork's start block and redeploy it.
+4. Re-index: point the indexer at the new deploy blocks (iris-indexer `ponder/src/chains.ts`)
+   and redeploy it. A rebuild on the same fork block, with nothing sent before
+   `replay.sh`, lands on the same block numbers and needs only the redeploy.
 
 `RPC_URL=<admin RPC> ./devnet/fund.sh <address> [eth] [usdc] [usdt]` sets balances for
 any test account.
