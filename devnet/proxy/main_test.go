@@ -55,6 +55,8 @@ func TestDeny(t *testing.T) {
 		{"escaped method", escapedMethod, true},
 		{"escaped key", escapedKey, true},
 		{"escaped duplicate key", `{"id":1,"method":"eth_call","meth` + bs + `u006fd":"anvil_setCode"}`, true},
+		{"escaped key before a plain duplicate", `{"id":1,"meth` + bs + `u006fd":"anvil_setCode","method":"eth_call"}`, true},
+		{"escaped public method", `{"id":1,"method":"eth` + bs + `u005fchainId"}`, false},
 		{"subscribe", `{"id":1,"method":"eth_subscribe","params":["newHeads"]}`, false},
 		{"non-string method", `{"id":1,"method":["eth_call"]}`, true},
 		{"missing method", `{"id":1}`, true},

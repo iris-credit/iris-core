@@ -40,3 +40,30 @@ jobs:
         run: forge test -vvv
         env:
           API_KEY_ALCHEMY: ${{ secrets.API_KEY_ALCHEMY }}
+
+  devnet-proxy:
+    name: Devnet RPC proxy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: devnet/proxy
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: devnet/proxy/go.mod
+          cache: false
+
+      - name: Check formatting
+        run: test -z "$(gofmt -l .)"
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
