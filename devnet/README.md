@@ -61,8 +61,9 @@ repo against the fork's URL like any other network.
 
 1. Set `DEVNET_EPOCH` to a new value and redeploy. The entrypoint deletes the state
    file and anvil forks the current mainnet head. A plain restart or redeploy keeps the
-   state. A state file cut short mid-write is moved aside the same way, rather than
-   crash-looping the service.
+   state, and so does a volume with no epoch marker yet (`/data/epoch`): it adopts the
+   current epoch. A state file cut short mid-write is moved aside the same way, rather
+   than crash-looping the service.
 2. From this repo, rebuild Iris and fund the staging actors:
 
    ```bash

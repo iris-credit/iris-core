@@ -15,7 +15,7 @@ esac
 STATE=/data/state.json
 
 # Without the volume every restart silently drops all staging state.
-if ! grep -qs ' /data ' /proc/mounts && [ -z "$ALLOW_EPHEMERAL" ]; then
+if ! grep -qs ' /data ' /proc/mounts && [ "$ALLOW_EPHEMERAL" != 1 ]; then
   echo "no volume mounted at /data (set ALLOW_EPHEMERAL=1 to run without persistence)" >&2
   exit 1
 fi
@@ -24,7 +24,9 @@ mkdir -p /data
 # Reset switch: changing DEVNET_EPOCH starts over from a fresh fork of the current head (then run
 # devnet/replay.sh). A plain restart or redeploy keeps the state.
 EPOCH="${DEVNET_EPOCH:-0}"
-if [ "$(cat /data/epoch 2>/dev/null)" != "$EPOCH" ]; then
+# A volume from before the marker existed adopts the current epoch, so a rollout never resets it.
+[ -e /data/epoch ] || echo "$EPOCH" >/data/epoch
+if [ "$(cat /data/epoch)" != "$EPOCH" ]; then
   rm -f "$STATE"
   echo "$EPOCH" >/data/epoch
   echo "devnet epoch $EPOCH: starting from a fresh fork" >&2
