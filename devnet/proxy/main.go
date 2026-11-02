@@ -48,6 +48,13 @@ var publicMethods = setOf(
 	"eth_getLogs", "eth_newFilter", "eth_newBlockFilter", "eth_newPendingTransactionFilter",
 	"eth_getFilterChanges", "eth_getFilterLogs", "eth_uninstallFilter",
 	"eth_sendRawTransaction", "eth_subscribe", "eth_unsubscribe",
+	// Otterscan's explorer API, all read-only (anvil serves it natively), plus the header probe
+	// Otterscan makes at start-up. Listed one by one so no other ots_* or erigon_* name gets in.
+	"erigon_getHeaderByNumber",
+	"ots_getApiLevel", "ots_hasCode", "ots_getBlockDetails", "ots_getBlockDetailsByHash",
+	"ots_getBlockTransactions", "ots_getContractCreator", "ots_getInternalOperations",
+	"ots_getTransactionBySenderAndNonce", "ots_getTransactionError", "ots_traceTransaction",
+	"ots_searchTransactionsAfter", "ots_searchTransactionsBefore",
 )
 
 func setOf(names ...string) map[string]bool {

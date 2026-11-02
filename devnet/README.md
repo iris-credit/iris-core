@@ -8,7 +8,8 @@ iris-ui, and the iris-bots services.
   for `eth_subscribe`. It is Cloudflare-proxied and rate-limited to 50 req/10s per IP (a
   WebSocket counts once, when it connects). `devnet-proxy` (`proxy/`) serves it and forwards
   only standard JSON-RPC (reads, `eth_call`, `eth_estimateGas`, `eth_simulateV1`,
-  `eth_sendRawTransaction`, …), checking every WebSocket message the same way. Cheatcodes,
+  `eth_sendRawTransaction`, …, plus the read-only `ots_*` methods Otterscan needs), checking
+  every WebSocket message the same way. Cheatcodes,
   `eth_sendTransaction`, signing and tracing get a `-32601` error. Batches are capped at 1000
   calls.
 - **Admin RPC** (`replay.sh`, `fund.sh`, scriptMaster's `VNET_RPC_URL`, the faucet's server):
