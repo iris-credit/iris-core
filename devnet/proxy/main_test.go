@@ -1,16 +1,40 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/coder/websocket"
 )
+
+// The escapes are assembled at run time: typed literally, an editing tool once decoded them and
+// these cases silently tested the plain method name.
+var (
+	bs            = string(rune(92)) // a backslash
+	escapedMethod = `{"id":1,"method":"anvil` + bs + `u005fsetCode"}`
+	escapedKey    = `{"id":1,"meth` + bs + `u006fd":"anvil_setCode"}`
+)
+
+func TestEscapes(t *testing.T) {
+	for _, body := range []string{escapedMethod, escapedKey} {
+		if !strings.Contains(body, bs) {
+			t.Fatalf("%s holds no backslash, so it tests no escape", body)
+		}
+		req, err := parseRequest(json.RawMessage(body))
+		if err != nil || req.method != "anvil_setCode" {
+			t.Fatalf("%s: method %q, err %v; want anvil_setCode", body, req.method, err)
+		}
+	}
+}
 
 func TestDeny(t *testing.T) {
 	cases := []struct {
@@ -28,18 +52,18 @@ func TestDeny(t *testing.T) {
 		{"batch hiding a cheatcode", `[{"id":1,"method":"eth_chainId"},{"id":2,"method":"anvil_reset"}]`, true},
 		{"case-variant key", `{"id":1,"method":"anvil_setCode","Method":"eth_call"}`, true},
 		{"duplicate method key", `{"id":1,"method":"anvil_setCode","method":"eth_call"}`, true},
-		{"escaped method", `{"id":1,"method":"anvil\u005fsetCode"}`, true},
-		{"escaped key", `{"id":1,"\u006dethod":"anvil_setCode"}`, true},
-		{"escaped key hiding a cheatcode", `{"id":1,"\u006dethod":"anvil_setCode","method":"eth_call"}`, true},
-		{"escaped public method", `{"id":1,"method":"eth\u005fchainId"}`, false},
+		{"escaped method", escapedMethod, true},
+		{"escaped key", escapedKey, true},
+		{"escaped duplicate key", `{"id":1,"method":"eth_call","meth` + bs + `u006fd":"anvil_setCode"}`, true},
+		{"escaped key before a plain duplicate", `{"id":1,"meth` + bs + `u006fd":"anvil_setCode","method":"eth_call"}`, true},
+		{"escaped public method", `{"id":1,"method":"eth` + bs + `u005fchainId"}`, false},
+		{"subscribe", `{"id":1,"method":"eth_subscribe","params":["newHeads"]}`, false},
 		{"non-string method", `{"id":1,"method":["eth_call"]}`, true},
 		{"missing method", `{"id":1}`, true},
 		{"trailing value", `{"id":1,"method":"eth_call"} {"id":2,"method":"anvil_reset"}`, true},
 		{"malformed", `{"id":1,"method":`, true},
 		{"empty batch", `[]`, true},
 		{"batch of non-objects", `["eth_call"]`, true},
-		{"batch at the cap", batchOf(maxBatch, "eth_chainId"), false},
-		{"batch over the cap", batchOf(maxBatch+1, "eth_chainId"), true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -48,47 +72,6 @@ func TestDeny(t *testing.T) {
 				t.Fatalf("refused = %v, want %v", got, c.refused)
 			}
 		})
-	}
-}
-
-func batchOf(n int, method string) string {
-	calls := make([]string, n)
-	for i := range calls {
-		calls[i] = fmt.Sprintf(`{"id":%d,"method":%q}`, i, method)
-	}
-	return "[" + strings.Join(calls, ",") + "]"
-}
-
-// A refused batch answers each call with its own method only, so the response grows linearly
-// with the request instead of echoing every refused name into every error.
-func TestDenyResponseIsLinear(t *testing.T) {
-	long := "anvil_" + strings.Repeat("x", 10_000)
-	body := batchOf(maxBatch, long)
-	resp, refused := deny([]byte(body))
-	if resp == nil || len(refused) != maxBatch {
-		t.Fatalf("refused %d calls, want %d", len(refused), maxBatch)
-	}
-	out, _ := json.Marshal(resp)
-	if len(out) > 300*maxBatch {
-		t.Fatalf("response is %d bytes for a %d-byte request", len(out), len(body))
-	}
-	var calls []rpcResponse
-	if err := json.Unmarshal(out, &calls); err != nil || len(calls) != maxBatch {
-		t.Fatalf("decode: %v, %d calls", err, len(calls))
-	}
-	if strings.Contains(calls[0].Error.Message, strings.Repeat("x", maxMethodEcho+1)) {
-		t.Fatalf("method name not truncated: %s", calls[0].Error.Message)
-	}
-
-	resp, _ = deny([]byte(`[{"id":1,"method":"eth_chainId"},{"id":2,"method":"anvil_reset"}]`))
-	mixed := resp.([]rpcResponse)
-	if strings.Contains(mixed[0].Error.Message, "anvil_reset") || !strings.Contains(mixed[1].Error.Message, `"anvil_reset"`) {
-		t.Fatalf("per-call messages: %q, %q", mixed[0].Error.Message, mixed[1].Error.Message)
-	}
-
-	resp, _ = deny([]byte(batchOf(maxBatch+1, "eth_chainId")))
-	if r, ok := resp.(rpcResponse); !ok || r.Error.Code != -32600 {
-		t.Fatalf("oversized batch: %+v", resp)
 	}
 }
 
@@ -152,5 +135,131 @@ func TestServeHTTP(t *testing.T) {
 	closed.ServeHTTP(rec, httptest.NewRequest("POST", "/admin/", strings.NewReader(cheat)))
 	if rec.Code != 404 {
 		t.Fatalf("admin door without a token: code %d", rec.Code)
+	}
+}
+
+// A refused batch's answer must grow with the request, not with its square.
+func TestRefusedBatchSize(t *testing.T) {
+	h := &handler{}
+	batch := func(n int, call string) string {
+		return "[" + strings.TrimSuffix(strings.Repeat(call+",", n), ",") + "]"
+	}
+	for _, c := range []struct {
+		body  string
+		ratio int
+	}{
+		{batch(maxBatch, `{"jsonrpc":"2.0","id":1,"method":"anvil_setBalance","params":[]}`), 3},
+		{batch(maxBatch, `{"method":"x"}`), 8}, // the most error bytes per request byte
+		{batch(maxBatch, `{"method":"`+strings.Repeat("a", 4096)+`"}`), 1},
+	} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("POST", "/", strings.NewReader(c.body)))
+		var out []rpcResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || len(out) != maxBatch {
+			t.Fatalf("want %d errors, got %d (%v)", maxBatch, len(out), err)
+		}
+		if got := rec.Body.Len(); got > c.ratio*len(c.body) {
+			t.Fatalf("%d-byte request got a %d-byte answer, over %dx", len(c.body), got, c.ratio)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("POST", "/", strings.NewReader(batch(maxBatch+1, `{"id":1,"method":"eth_chainId"}`))))
+	var one rpcResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &one); err != nil || one.Error.Code != -32600 {
+		t.Fatalf("oversize batch: want one -32600 error, got %s", rec.Body.String())
+	}
+}
+
+func TestWebSocket(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var mu sync.Mutex
+	var forwarded []string
+	upstreamClosed := make(chan websocket.StatusCode, 4)
+	anvil := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		for {
+			_, msg, err := c.Read(ctx)
+			if err != nil {
+				upstreamClosed <- websocket.CloseStatus(err)
+				return
+			}
+			mu.Lock()
+			forwarded = append(forwarded, string(msg))
+			mu.Unlock()
+			_ = c.Write(ctx, websocket.MessageText, []byte(`{"jsonrpc":"2.0","id":1,"result":"0x1"}`))
+		}
+	}))
+	defer anvil.Close()
+	token := "0123456789abcdef0123456789abcdef"
+	proxy := httptest.NewServer(&handler{anvilWS: "ws" + strings.TrimPrefix(anvil.URL, "http"), adminToken: token})
+	defer proxy.Close()
+	base := "ws" + strings.TrimPrefix(proxy.URL, "http")
+
+	dial := func(path string) *websocket.Conn {
+		c, _, err := websocket.Dial(ctx, base+path, nil)
+		if err != nil {
+			t.Fatalf("dial %s: %v", path, err)
+		}
+		return c
+	}
+	call := func(c *websocket.Conn, typ websocket.MessageType, req string) string {
+		if err := c.Write(ctx, typ, []byte(req)); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		_, resp, err := c.Read(ctx)
+		if err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		return string(resp)
+	}
+	takeForwarded := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		f := forwarded
+		forwarded = nil
+		return f
+	}
+	sub := `{"jsonrpc":"2.0","id":1,"method":"eth_subscribe","params":["newHeads"]}`
+	cheat := `{"jsonrpc":"2.0","id":7,"method":"anvil_setBalance","params":[]}`
+
+	pub := dial("/")
+	if resp := call(pub, websocket.MessageText, sub); !strings.Contains(resp, `"result"`) {
+		t.Fatalf("public subscribe: %s", resp)
+	}
+	for _, typ := range []websocket.MessageType{websocket.MessageText, websocket.MessageBinary} {
+		if resp := call(pub, typ, cheat); !strings.Contains(resp, "-32601") || !strings.Contains(resp, `"id":7`) {
+			t.Fatalf("public cheatcode (%v): %s", typ, resp)
+		}
+	}
+	_ = pub.Close(websocket.StatusNormalClosure, "")
+	if s := <-upstreamClosed; s != websocket.StatusNormalClosure {
+		t.Fatalf("client's close reached anvil as %v", s)
+	}
+	if f := takeForwarded(); len(f) != 1 || f[0] != sub {
+		t.Fatalf("public door forwarded %v, want only the subscribe", f)
+	}
+
+	adm := dial("/admin/" + token)
+	if resp := call(adm, websocket.MessageText, cheat); !strings.Contains(resp, `"result"`) {
+		t.Fatalf("admin cheatcode: %s", resp)
+	}
+	_ = adm.Close(websocket.StatusNormalClosure, "")
+	<-upstreamClosed
+	if f := takeForwarded(); len(f) != 1 || f[0] != cheat {
+		t.Fatalf("admin door forwarded %v", f)
+	}
+
+	_, resp, err := websocket.Dial(ctx, base+"/admin/wrong-token-wrong-token-wrong", nil)
+	if err == nil || resp == nil || resp.StatusCode != 404 {
+		t.Fatalf("wrong token: err %v, resp %v", err, resp)
+	}
+	if f := takeForwarded(); len(f) != 0 {
+		t.Fatalf("wrong token forwarded %v", f)
 	}
 }
