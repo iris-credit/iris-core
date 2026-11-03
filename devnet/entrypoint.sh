@@ -85,8 +85,8 @@ done) &
 # Chain id 9991 (the SDK's ChainId.VNet) so @iris-credit/core-sdk addresses
 # resolve unchanged while devnet transactions and EIP-712 signatures stay invalid on
 # mainnet — no cross-replay. Throwaway keys only — never a real key against this URL.
-# --prune-history 64 bounds memory but keeps the last 64 block states: the indexer and keepers read
-# pinned to a block, and with no history a read one block behind the head fails.
+# --prune-history 64 bounds memory but keeps the last 64 block states, and --preserve-historical-states
+# writes them into the snapshot so they survive a restart: the indexer and keepers read pinned to a block.
 exec anvil \
   --host 0.0.0.0 \
   --port "${PORT:-8545}" \
@@ -97,4 +97,5 @@ exec anvil \
   --state "$STATE" \
   --state-interval 60 \
   --prune-history 64 \
+  --preserve-historical-states \
   --auto-impersonate
