@@ -8,6 +8,7 @@ import {TimelockController} from "@openzeppelin/contracts/governance/TimelockCon
 
 import {BaseScript} from "./Base.s.sol";
 import {IrisTimelock} from "./IrisTimelock.sol";
+import {Iris} from "../src/Iris.sol";
 import {IIris} from "../src/interfaces/IIris.sol";
 import {IBlm} from "../src/interfaces/IBlm.sol";
 import {BP} from "../src/libraries/ConstantsLib.sol";
@@ -71,20 +72,17 @@ contract SetConfig is BaseScript {
         ownerExec(iris, abi.encodeCall(IIris.setFeeRecipient, (recipient)));
     }
 
-    /// @dev Env: OWNER (defaults to the Timelock in the address book). Hand off the protocol.
-    /// Deliberate, final step: setOwner has no accept step, so a wrong address loses governance for
-    /// good. Refuses until the launch config is live on-chain (see checkLaunchConfig), and handing off
-    /// to the recorded Timelock first re-checks its roles and delay against config.governance.
+    /// @dev Hand off the protocol to the Timelock in the address book, the only target: setOwner has no
+    /// accept step, so a wrong address would lose governance for good. Deliberate, final step. Refuses
+    /// until the launch config is live on-chain (see checkLaunchConfig) and the Timelock matches
+    /// config.governance. A later owner change gets its own op when there is one.
     function transferOwnership() public {
         address timelock = load("Timelock");
-        address newOwner = vm.envOr("OWNER", timelock);
-        require(newOwner != address(0), "owner zero (deploy the Timelock first)");
-        require(newOwner.code.length != 0, "owner must be a contract");
+        require(timelock != address(0), "no Timelock in the book (run DeployTimelock first)");
+        require(IIris(iris).owner() != timelock, "Iris is already owned by the Timelock");
         require(_launchConfig(false) == 0, "launch config not live on-chain (gaps listed above)");
-        if (newOwner == timelock) {
-            IrisTimelock.check(TimelockController(payable(timelock)), _governance(), broadcaster);
-        }
-        ownerExec(iris, abi.encodeCall(IIris.setOwner, (newOwner)));
+        IrisTimelock.check(TimelockController(payable(timelock)), _governance(), broadcaster);
+        ownerExec(iris, abi.encodeCall(IIris.setOwner, (timelock)));
     }
 
     /// @dev Configure a deployed BLM so it is usable (an unconfigured BLM returns bondRequirement 0, which
@@ -144,6 +142,15 @@ contract SetConfig is BaseScript {
     function _launchConfig(bool sendMissing) internal returns (uint256 n) {
         IIris protocol = IIris(iris);
 
+        // The Iris in the book must be this build. A stale book (the pre-audit Iris still recorded) would pass every
+        // check below, since its BLMs and adapter are bound to it too, and the handoff would give it to the timelock.
+        // Iris's runtime code depends only on its one immutable, POD_IMPL, and the compiler settings (bytecode_hash =
+        // none), so a simulation-only deployment of this source reproduces it exactly. It is never broadcast.
+        require(
+            keccak256(address(new Iris(address(1), protocol.POD_IMPL())).code) == keccak256(iris.code),
+            "Iris in the book is not this build (stale deployments/<chainId>.json?)"
+        );
+
         // Undecided launch params block both modes: an absent list would otherwise pass vacuously.
         require(
             vm.keyExistsJson(config, ".bondLltvs") && config.readUintArray(".bondLltvs").length != 0,
@@ -190,6 +197,8 @@ contract SetConfig is BaseScript {
 
         uint256[] memory bondLltvs = config.readUintArray(".bondLltvs");
         for (uint256 i; i < bondLltvs.length; i++) {
+            // Iris accepts 0, and an enabled LLTV can never be disabled.
+            require(bondLltvs[i] != 0, "bond LLTV 0 in config");
             if (!protocol.isBondLltvEnabled(bondLltvs[i])) {
                 n += _fix(
                     sendMissing,
@@ -244,8 +253,12 @@ contract SetConfig is BaseScript {
             }
         }
 
-        // feeRecipient before fee: a non-zero fee without a recipient would burn fees.
+        // feeRecipient before fee. Iris's header leaves `fee != 0 => feeRecipient != address(0)` to the team, and
+        // setFee does not check it: with a zero recipient, _claimable reverts, blocking repay and liquidate.
         address feeRecipient = config.readAddress(".feeRecipient");
+        require(
+            config.readUint(".fee") == 0 || feeRecipient != address(0), "fee set but feeRecipient is zero in config"
+        );
         if (protocol.feeRecipient() != feeRecipient) {
             n += _fix(
                 sendMissing,

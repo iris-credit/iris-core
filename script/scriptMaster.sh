@@ -179,7 +179,7 @@ case "$ACTION" in
     OWNER=$(jq -r '.Timelock // empty' "$(bookFile)" 2>/dev/null || true)
     [[ -n "$OWNER" ]] || { error "no Timelock in $(bookFile); run \"Deploy Timelock\" first"; exit 1; }
     gum confirm "Transfer Iris ownership to the Timelock $OWNER? There is no undo." || exit 1
-    OWNER="$OWNER" forge script script/SetConfig.s.sol --sig "transferOwnership()" $(rpcArgs) | tee "$OPLOG"
+    forge script script/SetConfig.s.sol --sig "transferOwnership()" $(rpcArgs) | tee "$OPLOG"
     maybeSave owner "$OWNER"
     ;;
 esac

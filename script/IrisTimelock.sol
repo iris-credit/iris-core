@@ -17,7 +17,10 @@ import {TimelockController} from "@openzeppelin/contracts/governance/TimelockCon
 ///   role to anyone, so the Safe signs only the schedule and a bot or any EOA executes.
 /// - DEFAULT_ADMIN: the timelock itself only. The constructor's optional admin is always
 ///   `address(0)`: an external admin could grant roles with no delay and bypass the timelock. Every
-///   role change and every `updateDelay` is therefore a timelocked self-call that waits `minDelay`.
+///   `grantRole`, `revokeRole` and `updateDelay` is therefore a timelocked self-call that waits `minDelay`.
+///   `renounceRole` is not: a holder drops its own role at once. The Safe is the only proposer, so a
+///   signed `renounceRole(PROPOSER_ROLE)` leaves nobody able to schedule and freezes Iris's config for
+///   good (Iris is immutable). Never sign one.
 ///
 /// A ready operation never expires: it stays executable until executed or cancelled, so cancel
 /// anything that should not land.
