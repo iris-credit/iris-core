@@ -13,6 +13,7 @@ case "$FORK_URL" in
 esac
 
 STATE=/data/state.json
+PIN=/data/fork-block
 
 # Without the volume every restart silently drops all staging state.
 if ! grep -qs ' /data ' /proc/mounts && [ "$ALLOW_EPHEMERAL" != 1 ]; then
@@ -27,7 +28,7 @@ EPOCH="${DEVNET_EPOCH:-0}"
 # A volume from before the marker existed adopts the current epoch, so a rollout never resets it.
 [ -e /data/epoch ] || echo "$EPOCH" >/data/epoch
 if [ "$(cat /data/epoch)" != "$EPOCH" ]; then
-  rm -f "$STATE"
+  rm -f "$STATE" "$PIN"
   echo "$EPOCH" >/data/epoch
   echo "devnet epoch $EPOCH: starting from a fresh fork" >&2
 fi
@@ -38,6 +39,37 @@ if [ -e "$STATE" ] && [ "$(tail -c 1 "$STATE")" != "}" ]; then
   mv "$STATE" "/data/state.corrupt.$(date +%s).json"
   echo "state.json was truncated; moved it aside and started from a fresh fork (run devnet/replay.sh)" >&2
 fi
+
+# Every boot of an epoch forks the same block. Unpinned, anvil re-forks the current head and lays the
+# snapshot (taken against the old head) over it: two mainnet heights in one chain, with a clock behind
+# the venues' last update. FORK_BLOCK_NUMBER overrides and is recorded too.
+[ -n "$FORK_BLOCK_NUMBER" ] && echo "$FORK_BLOCK_NUMBER" >"$PIN"
+FORK_BLOCK="$(cat "$PIN" 2>/dev/null || true)"
+FRESH=
+[ -e "$STATE" ] || FRESH=1
+if [ -z "$FRESH" ] && [ -z "$FORK_BLOCK" ]; then
+  echo "WARNING: snapshot without a recorded fork block; set FORK_BLOCK_NUMBER to the block it was forked from" >&2
+fi
+
+# Once anvil is up: record where an unpinned fork landed, and on a fresh chain move the clock to now
+# (anvil starts it at the fork block's timestamp, hours behind when the pin is old).
+(
+  rpc="http://127.0.0.1:${PORT:-8545}"
+  i=0
+  until cast chain-id --rpc-url "$rpc" >/dev/null 2>&1; do
+    i=$((i + 1))
+    [ "$i" -gt 120 ] && exit 0
+    sleep 1
+  done
+  if [ -z "$FORK_BLOCK" ]; then
+    cast rpc anvil_nodeInfo --rpc-url "$rpc" | sed -n 's/.*"forkBlockNumber":\([0-9]*\).*/\1/p' >"$PIN.tmp"
+    if [ -s "$PIN.tmp" ]; then mv "$PIN.tmp" "$PIN"; else rm -f "$PIN.tmp"; fi
+    echo "devnet fork block pinned at $(cat "$PIN" 2>/dev/null)" >&2
+  fi
+  if [ -n "$FRESH" ]; then
+    cast rpc anvil_setTime "$(date +%s)" --rpc-url "$rpc" >/dev/null
+  fi
+) &
 
 # The public door: devnet-proxy on PROXY_PORT (the custom domain's target port) forwards standard
 # JSON-RPC and refuses cheatcodes outside /admin/<ADMIN_TOKEN>. anvil's own port stays reachable only on
@@ -58,7 +90,7 @@ exec anvil \
   --chain-id 9991 \
   --fork-url "$FORK_URL" \
   --fork-header "Authorization: Bearer $ALCHEMY_KEY" \
-  ${FORK_BLOCK_NUMBER:+--fork-block-number "$FORK_BLOCK_NUMBER"} \
+  ${FORK_BLOCK:+--fork-block-number "$FORK_BLOCK"} \
   --state "$STATE" \
   --state-interval 60 \
   --prune-history \
