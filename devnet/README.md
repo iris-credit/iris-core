@@ -67,7 +67,8 @@ repo against the fork's URL like any other network.
 
 1. Set `DEVNET_EPOCH` to a new value and redeploy. The entrypoint deletes the state
    file and the recorded fork block, and anvil forks the current mainnet head. That block
-   is recorded, and on a fresh chain the clock is moved to now. A plain restart or
+   is recorded. Every boot moves the clock to now (never behind the last block): anvil
+   otherwise restarts it at the fork block's timestamp and mines blocks back in time. A plain restart or
    redeploy keeps the state and the fork block, and so does a volume with no epoch marker
    yet (`/data/epoch`): it adopts the current epoch. A state file cut short mid-write is
    moved aside, rather than crash-looping the service; the recorded fork block stays.

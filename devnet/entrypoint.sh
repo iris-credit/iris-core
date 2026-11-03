@@ -51,8 +51,8 @@ if [ -z "$FRESH" ] && [ -z "$FORK_BLOCK" ]; then
   echo "WARNING: snapshot without a recorded fork block; set FORK_BLOCK_NUMBER to the block it was forked from" >&2
 fi
 
-# Once anvil is up: record where an unpinned fork landed, and on a fresh chain move the clock to now
-# (anvil starts it at the fork block's timestamp, hours behind when the pin is old).
+# Once anvil is up: record where an unpinned fork landed, and move the clock to now (never behind the last
+# block). anvil restarts it at the fork block's timestamp, so new blocks would go back in time.
 (
   rpc="http://127.0.0.1:${PORT:-8545}"
   i=0
@@ -66,9 +66,10 @@ fi
     if [ -s "$PIN.tmp" ]; then mv "$PIN.tmp" "$PIN"; else rm -f "$PIN.tmp"; fi
     echo "devnet fork block pinned at $(cat "$PIN" 2>/dev/null)" >&2
   fi
-  if [ -n "$FRESH" ]; then
-    cast rpc anvil_setTime "$(date +%s)" --rpc-url "$rpc" >/dev/null
-  fi
+  now="$(date +%s)"
+  last="$(cast block latest -f timestamp --rpc-url "$rpc" 2>/dev/null || echo 0)"
+  [ "$last" -ge "$now" ] && now=$((last + 1))
+  cast rpc anvil_setTime "$now" --rpc-url "$rpc" >/dev/null
 ) &
 
 # The public door: devnet-proxy on PROXY_PORT (the custom domain's target port) forwards standard
@@ -84,6 +85,8 @@ done) &
 # Chain id 9991 (the SDK's ChainId.VNet) so @iris-credit/core-sdk addresses
 # resolve unchanged while devnet transactions and EIP-712 signatures stay invalid on
 # mainnet — no cross-replay. Throwaway keys only — never a real key against this URL.
+# --prune-history 64 bounds memory but keeps the last 64 block states: the indexer and keepers read
+# pinned to a block, and with no history a read one block behind the head fails.
 exec anvil \
   --host 0.0.0.0 \
   --port "${PORT:-8545}" \
@@ -93,5 +96,5 @@ exec anvil \
   ${FORK_BLOCK:+--fork-block-number "$FORK_BLOCK"} \
   --state "$STATE" \
   --state-interval 60 \
-  --prune-history \
+  --prune-history 64 \
   --auto-impersonate
