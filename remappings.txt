@@ -4,3 +4,4 @@ forge-std/=lib/forge-std/src/
 @aave/=lib/aave-v3-origin/src/
 @morpho-blue-irm/=lib/morpho-blue-irm/src/
 @morpho-blue-irm-mb/=lib/morpho-blue-irm/lib/morpho-blue/src/
+@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/

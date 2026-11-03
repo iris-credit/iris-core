@@ -63,15 +63,24 @@ runAnvil() {
 
 killAnvil() { pkill -x anvil 2>/dev/null && info "stopped anvil"; return 0; }
 
+# The address book the current environment writes to (the chain-ids rpcArgs targets).
+bookFile() {
+  case "$ENVIRONMENT" in
+    production) echo "deployments/1.json" ;;
+    vnet) echo "deployments/9991.json" ;;
+    *) echo "deployments/31337.json" ;;
+  esac
+}
+
 # Record a governance value into config, but only when the preceding op ACTUALLY broadcast in production.
-# After the timelock handoff, ownerExec only prints calldata (no on-chain change), so we must not record it.
+# After the Timelock handoff, ownerExec only prints calldata (no on-chain change), so we must not record it.
 # $OPLOG holds the last op's output; the "broadcast owner call" line is ownerExec's broadcast marker.
 maybeSave() { # key value
   [[ "$ENVIRONMENT" == "production" ]] || return 0
   if grep -q "broadcast owner call" "$OPLOG"; then
     saveConfig "$1" "$2"
   else
-    info "owner is the timelock - not recording $1; queue the printed calldata, then update config/${CHAIN:-ethereum}.json by hand once the timelock executes it"
+    info "owner is the Timelock - not recording $1; send the printed calldata, then update config/${CHAIN:-ethereum}.json by hand once the timelock executes it"
   fi
 }
 
