@@ -38,6 +38,7 @@ abstract contract NetworkConfig is CommonBase {
             setAddress("wstETH", json.readAddress(".tokens.wstETH"));
             setAddress("aaveV3Pool", json.readAddress(".venues.aaveV3.address"));
             setAddress("morphoBlue", json.readAddress(".venues.morphoBlue.address"));
+            setAddress("sparkLendPool", json.readAddress(".venues.sparkLend.address"));
 
             // forgefmt: disable-start
             setMorphoMarketId("cbBTC/USDC", Id.wrap(json.readBytes32(".venues.morphoBlue.markets[\"cbBTC/USDC\"]")));

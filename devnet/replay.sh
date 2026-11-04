@@ -8,8 +8,10 @@
 # - Iris, Blm, WhitelistBlm and EthereumGeneralAdapter1 were CREATEd by DEPLOYER at nonces 0, 1, 2 and 15.
 #   DEPLOYER has never sent a mainnet transaction, so on a fresh fork its nonce is 0 again, and replaying
 #   the same scripts in the same order lands on the same addresses.
-# - PodImpl, Bundler3 and the two venue adapters came from other deployers. None of them holds storage
+# - PodImpl, Bundler3 and the venue adapters came from other deployers. None of them holds storage
 #   (only immutables), so a copy deployed anywhere is planted at the recorded address with anvil_setCode.
+#   SparkLendAdapter (venue 2) postdates the recorded deploy: devnet/sparklend.sh plants it before Deploy.s.sol
+#   runs, so the deployer never creates it, and registers it once Iris is back.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -38,7 +40,8 @@ nonce="$(cast nonce "$DEPLOYER" --rpc-url "$RPC_URL")"
 # contracts, then require the rebuilt book to equal the committed one.
 cp "$BOOK" "$BOOK.committed"
 trap 'mv "$BOOK.committed" "$BOOK"' EXIT
-jq '{PodImpl, Bundler3, AaveV3Adapter, MorphoBlueAdapter}' "$BOOK.committed" >"$BOOK"
+jq '{PodImpl, Bundler3, AaveV3Adapter, MorphoBlueAdapter}
+  + if has("SparkLendAdapter") then {SparkLendAdapter} else {} end' "$BOOK.committed" >"$BOOK"
 
 forge build
 
@@ -55,6 +58,12 @@ plant PodImpl src/Pod.sol:Pod
 plant Bundler3 src/periphery/Bundler3.sol:Bundler3
 plant AaveV3Adapter src/adapters/AaveV3Adapter.sol:AaveV3Adapter "$(jq -r .venues.aaveV3.address "$CONFIG")"
 plant MorphoBlueAdapter src/adapters/MorphoBlueAdapter.sol:MorphoBlueAdapter "$(jq -r .venues.morphoBlue.address "$CONFIG")"
+# SparkLendAdapter and SparkLend's prices; the venue waits for Iris. A first copy lands in the book: keep it.
+RPC_URL="$RPC_URL" ./devnet/sparklend.sh
+if ! jq -e .SparkLendAdapter "$BOOK.committed" >/dev/null; then
+  jq --arg adapter "$(jq -r .SparkLendAdapter "$BOOK")" '.SparkLendAdapter = $adapter' "$BOOK.committed" >"$BOOK.tmp"
+  mv "$BOOK.tmp" "$BOOK.committed"
+fi
 
 rpc anvil_setBalance "$DEPLOYER" "$(cast to-hex "$(cast to-wei 100)")"
 export ETH_FROM="$DEPLOYER" PRIVATE_KEY="" USE_LEDGER=false
@@ -62,11 +71,12 @@ run() { forge script "$@" --rpc-url "$RPC_URL" --broadcast --slow --unlocked --s
 
 # Nonces 0-2: Iris, Blm, WhitelistBlm.
 run script/Deploy.s.sol
-# Nonces 3-12: venues, markets, bond LLTV, BLM, fee recipient, fee (the inputs scriptMaster passes).
-VENUE_IDS="$(jq -r '[.venues[].id | tostring] | join(",")' "$CONFIG")" \
-  ADAPTERS="$(jq -r '[.venues[].adapter] | join(",")' "$CONFIG")" \
+# Nonces 3-12: venues, markets, bond LLTV, BLM, fee recipient, fee (the inputs scriptMaster passes), for the two
+# venues the recorded deploy ran with. SparkLend is registered after the replay, by sparklend.sh.
+VENUE_IDS="$(jq -r '[.venues | .aaveV3, .morphoBlue | .id | tostring] | join(",")' "$CONFIG")" \
+  ADAPTERS="$(jq -r '[.venues | .aaveV3, .morphoBlue | .adapter] | join(",")' "$CONFIG")" \
   MARKET_DATA="$(jq -r --arg empty "$(cast keccak "")" \
-    '[.venues[].markets[] | if . == "" then $empty else . end] | join(",")' "$CONFIG")" \
+    '[.venues | .aaveV3, .morphoBlue | .markets[] | if . == "" then $empty else . end] | join(",")' "$CONFIG")" \
   BOND_LLTV=800000000000000000 BLM=Blm \
   FEE="$(jq -r .fee "$CONFIG")" FEE_RECIPIENT="$(jq -r .feeRecipient "$CONFIG")" \
   run script/RedeployIris.s.sol
@@ -83,7 +93,10 @@ run script/DeployPeriphery.s.sol
 if ! diff <(jq -S . "$BOOK") <(jq -S . "$BOOK.committed"); then
   die "the rebuilt book (<) differs from the committed one (>)"
 fi
-info "all 8 contracts are at their recorded addresses"
+info "all $(jq length "$BOOK") contracts are at their recorded addresses"
+
+# Venue 2: SparkLend, now that Iris is back.
+RPC_URL="$RPC_URL" ./devnet/sparklend.sh
 
 # Optional staging actors: SOLVER gets ETH, USDC and USDT plus its standing max allowance to Iris
 # (the bond funding the solver bot expects); each of KEEPERS gets ETH for gas.
