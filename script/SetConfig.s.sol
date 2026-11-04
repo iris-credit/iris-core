@@ -241,6 +241,9 @@ contract SetConfig is BaseScript {
                 address token = config.readAddress(string.concat(".tokens", _key(tokens[j])));
                 uint256 slope = config.readUint(string.concat(entry, ".slope"));
                 uint256 intercept = config.readUint(string.concat(entry, ".intercept"));
+                // A 0 slope equals unset storage, so it would skip setParams and pass as configured while the BLM
+                // quotes a zero bond (take reverts). setParams rejects 0 anyway, and enforces the < WAD bounds itself.
+                require(slope != 0, string.concat(blms[i], " slope for ", tokens[j], " is 0 in config"));
                 if (IBlm(blm).slope(token) != slope || IBlm(blm).intercept(token) != intercept) {
                     n += _fix(
                         sendMissing,
