@@ -12,11 +12,11 @@ interface ISparkLendPoolConfigurator {
     function setReservePause(address asset, bool paused) external;
 }
 
-/// @dev SparkLend (an Aave V3.0 core fork) as venue 2, served by the unmodified AaveV3Adapter, on the real pool. Where
-/// SparkLend differs from Aave v3.6: token amounts round half up, reverts carry Error(string) codes, the residual debt
-/// of a full liquidation stays on the borrower, and the ETH and BTC prices come from medians that revert once every
-/// source
-/// is 25 h old. A fork's feeds stop at its block, so every test that moves time pins the prices SparkLend reads.
+/// @dev SparkLend (an Aave V3.0 core fork) as venue 2, served by the unmodified AaveV3Adapter, on the real pool.
+/// Where SparkLend differs from Aave v3.6: token amounts round half up, reverts carry Error(string) codes, the
+/// residual debt of a full liquidation stays on the borrower, and the ETH and BTC prices come from medians that
+/// revert once every source is 25 h old. A fork's feeds stop at its block, so every test that moves time pins the
+/// prices SparkLend reads.
 contract SparkLendForkTest is ForkTest {
     using MathLib for uint128;
     using MathLib for uint256;

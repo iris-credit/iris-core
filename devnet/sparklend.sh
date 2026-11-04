@@ -34,6 +34,8 @@ venue_id="$(jq -r .venues.sparkLend.id "$CONFIG")"
 
 # 1. The adapter.
 copy() {
+  # Fund the deployer explicitly rather than rely on anvil's pre-funded dev accounts.
+  cast rpc anvil_setBalance "$PLANTER" "$(cast to-hex "$(cast to-wei 1)")" --rpc-url "$RPC_URL" >/dev/null
   forge create src/adapters/AaveV3Adapter.sol:AaveV3Adapter --rpc-url "$RPC_URL" --unlocked --from "$PLANTER" \
     --broadcast --json --constructor-args "$pool" | jq -r .deployedTo
 }
