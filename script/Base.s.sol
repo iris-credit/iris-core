@@ -5,13 +5,16 @@ import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {stdJson} from "forge-std/StdJson.sol";
 
+import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
+
 import {IIris} from "../src/interfaces/IIris.sol";
+import {IrisTimelock} from "./IrisTimelock.sol";
 
 /// @dev Shared base for every Iris script.
 /// - loads `config/<chain>.json` into `config` (subclasses read fields inline with stdJson)
 /// - `save`/`load` the deployed address book at `deployments/<chainId>.json`
 /// - `ownerExec` broadcasts an owner call when the caller IS the owner, otherwise prints the
-///   calldata for the timelock to queue. Same script works before and after the handoff.
+///   Timelock calldata to send. Same script works before and after the handoff.
 abstract contract BaseScript is Script {
     using stdJson for string;
 
@@ -62,7 +65,8 @@ abstract contract BaseScript is Script {
     }
 
     /// @dev Run an owner-gated call to `target` (the Iris protocol, or a BLM that is gated by Iris's
-    /// owner). Broadcasts when the caller is the protocol owner, else prints the calldata for the timelock.
+    /// owner). Broadcasts when the caller is the protocol owner. Once the Timelock owns Iris, prints the
+    /// timelock transactions to send instead.
     function ownerExec(address target, bytes memory data) internal {
         address owner = IIris(iris).owner();
         if (owner == broadcaster) {
@@ -74,11 +78,58 @@ abstract contract BaseScript is Script {
                 }
             }
             console.log("broadcast owner call to %s", target);
+        } else if (owner == load("Timelock")) {
+            _printTimelockCalls(owner, target, data);
         } else {
-            console.log("owner is timelock %s - queue this call:", owner);
+            // Neither this script's key nor the Timelock in the address book: a wrong signing key, or an owner
+            // this script cannot route through (a newer governance contract, or a stale address book).
+            console.log("nothing sent: owner %s is not this script's sender %s", owner, broadcaster);
+            console.log("  nor the Timelock in deployments/%s.json. The call to make as the owner:", block.chainid);
             console.log("  to:   %s", target);
             console.log("  data:");
             console.logBytes(data);
         }
+    }
+
+    /// @dev Print the timelock calldata for an owner call: the proposer Safe sends `schedule`, then any
+    /// executor sends `execute` once `minDelay` has passed. The salt is the first one whose operation is not
+    /// done yet, so re-running the same op after scheduling it finds that operation and reports its state
+    /// instead of starting a new one, while repeating an already-executed op gets a fresh salt.
+    function _printTimelockCalls(address owner, address target, bytes memory data) internal view {
+        TimelockController timelock = TimelockController(payable(owner));
+        bytes32 salt;
+        bytes32 id = timelock.hashOperation(target, 0, data, bytes32(0), salt);
+        while (timelock.isOperationDone(id)) {
+            salt = bytes32(uint256(salt) + 1);
+            id = timelock.hashOperation(target, 0, data, bytes32(0), salt);
+        }
+        bytes memory execute = abi.encodeCall(TimelockController.execute, (target, 0, data, bytes32(0), salt));
+
+        console.log("owner is the Timelock %s", owner);
+        console.log("  target %s, operation id:", target);
+        console.logBytes32(id);
+        if (timelock.isOperationReady(id)) {
+            console.log("  ready - send now, from any executor, to the timelock:");
+            console.logBytes(execute);
+        } else if (timelock.isOperationPending(id)) {
+            console.log(
+                "  scheduled - executable from unix time %s; then send, to the timelock:", timelock.getTimestamp(id)
+            );
+            console.logBytes(execute);
+        } else {
+            uint256 delay = timelock.getMinDelay();
+            console.log("  1) send now, from the proposer Safe, to the timelock:");
+            console.logBytes(abi.encodeCall(TimelockController.schedule, (target, 0, data, bytes32(0), salt, delay)));
+            console.log("  2) send after %s seconds, from any executor, to the timelock:", delay);
+            console.logBytes(execute);
+        }
+    }
+
+    /// @dev Governance layout from `config.governance` (`minDelay` in seconds; an `executors` entry of
+    /// address(0) lets anyone execute).
+    function _governance() internal view returns (IrisTimelock.Governance memory g) {
+        g.proposer = config.readAddress(".governance.proposer");
+        g.executors = config.readAddressArray(".governance.executors");
+        g.minDelay = config.readUint(".governance.minDelay");
     }
 }

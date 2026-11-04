@@ -73,7 +73,10 @@ ACTION=$(gum choose \
   "Whitelist solver (WhitelistBlm)" \
   "Set fee" \
   "Set fee recipient" \
-  "Transfer ownership to timelock")
+  "Apply launch config (before the handoff)" \
+  "Check launch config (before the handoff)" \
+  "Deploy Timelock (governance)" \
+  "Transfer ownership to Timelock")
 
 # Every owner op lives in SetConfig.s.sol, selected by --sig.
 case "$ACTION" in
@@ -82,6 +85,24 @@ case "$ACTION" in
     # Permissionless: no Iris owner op. The script reads config itself and self-heals a stale adapter
     # binding after an Iris redeploy.
     forge script script/DeployPeriphery.s.sol $(rpcArgs)
+    ;;
+  "Apply launch config"*)
+    # Sets everything in the launch section of config that is not live yet (skips what is), while the
+    # deployer still owns Iris. Write and review those config values first: they are the only input.
+    jq '{venues: (.venues | map_values({id, adapter, markets})), bondLltvs, blmParams, feeRecipient, fee}' \
+      "config/$CHAIN.json"
+    gum confirm "Apply the launch config above to Iris?" || exit 1
+    forge script script/SetConfig.s.sol --sig "applyLaunchConfig()" $(rpcArgs)
+    ;;
+  "Check launch config"*)
+    # Read-only: lists every config launch parameter that is not live on-chain yet. Nothing is sent.
+    forge script script/SetConfig.s.sol --sig "checkLaunchConfig()" $(rpcArgs)
+    ;;
+  "Deploy Timelock"*)
+    # Proposer, executors and minDelay come from config.<chain>.governance; the script refuses an unset layout.
+    jq '.governance' "config/$CHAIN.json"
+    gum confirm "Deploy the Timelock with the governance above?" || exit 1
+    forge script script/DeployTimelock.s.sol $(rpcArgs)
     ;;
   "Deploy"*)
     forge script script/Deploy.s.sol $(rpcArgs)
@@ -153,10 +174,12 @@ case "$ACTION" in
     FEE_RECIPIENT="$FEE_RECIPIENT" forge script script/SetConfig.s.sol --sig "setFeeRecipient()" $(rpcArgs) | tee "$OPLOG"
     maybeSave feeRecipient "$FEE_RECIPIENT"
     ;;
-  "Transfer ownership to timelock")
-    OWNER=$(gum input --placeholder "timelock address (0x..)")
-    gum confirm "Transfer Iris ownership to $OWNER?" || exit 1
-    OWNER="$OWNER" forge script script/SetConfig.s.sol --sig "transferOwnership()" $(rpcArgs) | tee "$OPLOG"
+  "Transfer ownership to Timelock")
+    # Only to the Timelock recorded in this environment's book; the script re-checks it and the launch config first.
+    OWNER=$(jq -r '.Timelock // empty' "$(bookFile)" 2>/dev/null || true)
+    [[ -n "$OWNER" ]] || { error "no Timelock in $(bookFile); run \"Deploy Timelock\" first"; exit 1; }
+    gum confirm "Transfer Iris ownership to the Timelock $OWNER? There is no undo." || exit 1
+    forge script script/SetConfig.s.sol --sig "transferOwnership()" $(rpcArgs) | tee "$OPLOG"
     maybeSave owner "$OWNER"
     ;;
 esac
