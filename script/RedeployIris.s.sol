@@ -39,9 +39,16 @@ contract RedeployIris is BaseScript {
         for (uint256 i; i < venueIds.length; i++) {
             address adapter = load(adapters[i]);
             require(adapter != address(0), string.concat(adapters[i], " not deployed"));
-            if (IIris(iris).venueAdapter(venueIds[i]) == adapter) {
+            address liveAdapter = IIris(iris).venueAdapter(venueIds[i]);
+            if (liveAdapter == adapter) {
                 console.log("venue %s already -> %s, skipped", venueIds[i], adapters[i]);
             } else {
+                // Repointing a bound id would move its open loans onto another adapter: that upgrade is the
+                // deliberate "Add / upgrade venue" op, never a side effect of this setup.
+                require(
+                    liveAdapter == address(0),
+                    string.concat("venue ", vm.toString(venueIds[i]), " is bound to another adapter")
+                );
                 ownerExec(iris, abi.encodeCall(IIris.setVenueAdapter, (venueIds[i], adapter)));
             }
         }

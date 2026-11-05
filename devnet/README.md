@@ -79,8 +79,8 @@ repo against the fork's URL like any other network.
    ```
 
    It deploys every contract at its recorded address (it explains how in its header)
-   and stops if any address comes out different. It is idempotent: on a fork that
-   already has Iris it does nothing.
+   and stops if any address comes out different, then adds SparkLend (see "SparkLend
+   (venue 2)" below). It is idempotent: on a fork that already has Iris it does nothing.
 3. Redeploy the liquidation bot's Executor, a CREATE2 contract with a fixed address:
    iris-bots' `pnpm --filter @repo/contracts run deploy:executor`, signed with an anvil
    default key.
@@ -90,6 +90,28 @@ repo against the fork's URL like any other network.
 
 `RPC_URL=<admin RPC> ./devnet/fund.sh <address> [eth] [usdc] [usdt]` sets balances for
 any test account.
+
+## SparkLend (venue 2)
+
+`replay.sh` adds SparkLend through `sparklend.sh`, which a devnet that already has Iris needs
+once:
+
+```bash
+RPC_URL=https://devnet.iris.credit/admin/<ADMIN_TOKEN> ./devnet/sparklend.sh
+```
+
+It is idempotent and does three things:
+
+- **Adapter.** It plants `SparkLendAdapter` at its address in `deployments/9991.json`. While the
+  book has none, it deploys a first copy and writes it there. Commit that, then mirror it in
+  core-sdk's `CHAIN_ADDRESSES[VNet]`.
+- **Prices.** It points SparkLend's oracle at Aave's sources for WETH, wstETH, WBTC and cbBTC.
+  SparkLend's ETH and BTC prices are medians of Chronicle, Chainlink and RedStone, and they
+  revert once every source is 25 hours old. A fork's feeds stop at its block, so without this
+  SparkLend's take, withdraw and liquidation revert a day in. Aave's sources keep answering their
+  last round. Every new epoch needs it again, which `replay.sh` does.
+- **Venue.** It registers the adapter on Iris as venue 2, and never repoints an id that is live
+  with another adapter.
 
 ## Consumers
 

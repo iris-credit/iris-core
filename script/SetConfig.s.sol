@@ -118,8 +118,9 @@ contract SetConfig is BaseScript {
     /// bond LLTVs, BLMs and their params, then feeRecipient before fee. Config is the single source: write the
     /// launch values there and review them first, then apply, then check. Runs only while this key owns Iris
     /// (before the handoff); later changes go through the single-op menus and the Timelock. Idempotent:
-    /// anything already live is skipped, so a re-run after a partial failure fills the gaps. The solver
-    /// whitelist is not in config: set it with its own menu before the handoff.
+    /// anything already live is skipped, so a re-run after a partial failure fills the gaps. A venue id bound to
+    /// another adapter is refused, not repointed: that upgrade is the deliberate "Add / upgrade venue" op. The
+    /// solver whitelist is not in config: set it with its own menu before the handoff.
     function applyLaunchConfig() public {
         require(IIris(iris).owner() == broadcaster, "apply runs only while this key owns Iris (before the handoff)");
         console.log("applied %s launch setting(s)", _launchConfig(true));
@@ -162,20 +163,42 @@ contract SetConfig is BaseScript {
         );
 
         string[] memory venues = vm.parseJsonKeys(config, ".venues");
+        uint256 venueIds; // bitmap of the ids config has assigned so far
         for (uint256 i; i < venues.length; i++) {
             string memory venue = string.concat(".venues", _key(venues[i]));
             uint256 venueId = config.readUint(string.concat(venue, ".id"));
+            // Two config venues on one id would have the second repoint the first's loans in the same run.
+            require(
+                venueId < 128 && venueIds & (1 << venueId) == 0,
+                string.concat("venue ", venues[i], ": id ", vm.toString(venueId), " is above 127 or already in config")
+            );
+            venueIds |= 1 << venueId;
             string memory adapterName = config.readString(string.concat(venue, ".adapter"));
             address adapter = load(adapterName);
             require(adapter != address(0), string.concat(adapterName, " not deployed"));
-            if (protocol.venueAdapter(venueId) != adapter) {
-                n += _fix(
-                    sendMissing,
-                    string.concat("venue ", venues[i], " -> ", adapterName),
-                    "Add / upgrade venue",
-                    iris,
-                    abi.encodeCall(IIris.setVenueAdapter, (venueId, adapter))
-                );
+            address liveAdapter = protocol.venueAdapter(venueId);
+            if (liveAdapter != adapter) {
+                if (liveAdapter == address(0)) {
+                    n += _fix(
+                        sendMissing,
+                        string.concat("venue ", venues[i], " -> ", adapterName),
+                        "Add / upgrade venue",
+                        iris,
+                        abi.encodeCall(IIris.setVenueAdapter, (venueId, adapter))
+                    );
+                } else {
+                    // Iris resolves every position's adapter from its venue id, so repointing a bound id moves its open
+                    // loans onto the new adapter, which can leave them unclosable. The launch config only fills empty
+                    // ids; an upgrade is a deliberate single op after checking what the id holds.
+                    require(
+                        !sendMissing,
+                        string.concat("venue ", venues[i], " is bound to another adapter - upgrade it deliberately")
+                    );
+                    n++;
+                    console.log(
+                        "gap: venue %s is bound to %s - upgrade it with Add / upgrade venue", venues[i], liveAdapter
+                    );
+                }
             }
 
             string[] memory markets = vm.parseJsonKeys(config, string.concat(venue, ".markets"));
