@@ -14,8 +14,10 @@
       "adapter": "MorphoBlueAdapter",
       "markets": {
         "cbBTC/USDC": "0x64d65c9a2d91c36d56fbc42d69e979335320169b3df63bf92789e2c8883fcc64",
-        "wstETH/USDT": "0xe7e9694b754c4d4f7e21faf7223f6fa71abaeb10296a4c43a54a7977149687d2",
-        "WBTC/USDC": "0x3a85e619751152991742810df6ec69ce473daef99e28a64ab2340d7b7ccfee49"
+        "cbBTC/USDT": "0x4fe72543c5c95cd6b5f3cb516cd235ba882e2e705fe3424db6f99dfe5811d0d3",
+        "WBTC/USDC": "0x3a85e619751152991742810df6ec69ce473daef99e28a64ab2340d7b7ccfee49",
+        "WBTC/USDT": "0xa921ef34e2fc7a27ccc50ae7e4b154e16c9799d3387076c421423ef52ac4df99",
+        "wstETH/USDC": "0xb323495f7e4148be5643a4ea4a8221eef163e4bccfdedc2a6f4696baacbc86cc"
       }
     },
     "sparkLend": {
@@ -36,11 +38,18 @@
     "stETH": "0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84",
     "wstETH": "0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0"
   },
-  "feeRecipient": "0xC114D3109A8Cc85B40BA231cDA11c1d815654C7d",
-  "fee": "100000000000000000",
+  "bondLltvs": ["900000000000000000"],
+  "blmParams": {
+    "Blm": {
+      "USDC": { "slope": "83460000000000", "intercept": "0" },
+      "USDT": { "slope": "82590000000000", "intercept": "0" }
+    }
+  },
+  "feeRecipient": "0x6811c4463C3B725fa1314e50855405a241028c49",
+  "fee": "0",
   "governance": {
-    "proposer": "0x0000000000000000000000000000000000000000",
-    "executors": ["0x0000000000000000000000000000000000000000"],
+    "proposer": "0x6811c4463C3B725fa1314e50855405a241028c49",
+    "executors": ["0x6811c4463C3B725fa1314e50855405a241028c49"],
     "minDelay": 172800
   }
 }

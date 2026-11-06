@@ -42,7 +42,8 @@ abstract contract NetworkConfig is CommonBase {
 
             // forgefmt: disable-start
             setMorphoMarketId("cbBTC/USDC", Id.wrap(json.readBytes32(".venues.morphoBlue.markets[\"cbBTC/USDC\"]")));
-            setMorphoMarketId("wstETH/USDT", Id.wrap(json.readBytes32(".venues.morphoBlue.markets[\"wstETH/USDT\"]")));
+            // Not a launch market, so not in config; the fork tests still cover it.
+            setMorphoMarketId("wstETH/USDT", Id.wrap(0xe7e9694b754c4d4f7e21faf7223f6fa71abaeb10296a4c43a54a7977149687d2));
             setMorphoMarketId("WBTC/USDC", Id.wrap(json.readBytes32(".venues.morphoBlue.markets[\"WBTC/USDC\"]")));
             // forgefmt: disable-end
         }
