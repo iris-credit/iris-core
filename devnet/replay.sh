@@ -20,6 +20,8 @@ BOOK=deployments/9991.json
 CONFIG=config/ethereum.json
 DEPLOYER=0x006a43B0c6f1CE018023Cd384D4B98FA2C7e19Fa # VNet deployer and Iris owner
 PLANTER=0xa0Ee7A142d267C1f36714E4a8F75612F20a79720  # anvil default account 9; any account but DEPLOYER
+# cbBTC/USDC, wstETH/USDT, WBTC/USDC
+VNET_MORPHO_MARKETS=0x64d65c9a2d91c36d56fbc42d69e979335320169b3df63bf92789e2c8883fcc64,0xe7e9694b754c4d4f7e21faf7223f6fa71abaeb10296a4c43a54a7977149687d2,0x3a85e619751152991742810df6ec69ce473daef99e28a64ab2340d7b7ccfee49
 
 info() { printf '\033[0;34m[info]\033[0m %s\n' "$1"; }
 die() {
@@ -72,13 +74,14 @@ run() { forge script "$@" --rpc-url "$RPC_URL" --broadcast --slow --unlocked --s
 # Nonces 0-2: Iris, Blm, WhitelistBlm.
 run script/Deploy.s.sol
 # Nonces 3-12: venues, markets, bond LLTV, BLM, fee recipient, fee (the inputs scriptMaster passes), for the two
-# venues the recorded deploy ran with. SparkLend is registered after the replay, by sparklend.sh.
+# venues the recorded deploy ran with. SparkLend is registered after the replay, by sparklend.sh. The markets and
+# fee are pinned to what VNet ran with: $CONFIG holds the mainnet launch values, which differ, and any other
+# transaction count moves EthereumGeneralAdapter1 off nonce 15.
 VENUE_IDS="$(jq -r '[.venues | .aaveV3, .morphoBlue | .id | tostring] | join(",")' "$CONFIG")" \
   ADAPTERS="$(jq -r '[.venues | .aaveV3, .morphoBlue | .adapter] | join(",")' "$CONFIG")" \
-  MARKET_DATA="$(jq -r --arg empty "$(cast keccak "")" \
-    '[.venues | .aaveV3, .morphoBlue | .markets[] | if . == "" then $empty else . end] | join(",")' "$CONFIG")" \
+  MARKET_DATA="$(cast keccak ""),$VNET_MORPHO_MARKETS" \
   BOND_LLTV=800000000000000000 BLM=Blm \
-  FEE="$(jq -r .fee "$CONFIG")" FEE_RECIPIENT="$(jq -r .feeRecipient "$CONFIG")" \
+  FEE=100000000000000000 FEE_RECIPIENT=0xC114D3109A8Cc85B40BA231cDA11c1d815654C7d \
   run script/RedeployIris.s.sol
 # Nonces 13-14: the BLM params VNet ran with.
 BLM=Blm TOKEN="$(jq -r .tokens.USDC "$CONFIG")" SLOPE=101840000000000 INTERCEPT=1500000000000 \
